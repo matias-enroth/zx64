@@ -95,6 +95,9 @@ cl:     sta $e000,x
         sta $db00,x
         inx
         bne cl
+        sta $4003               ; a zx64mon from before a reset (RAM keeps
+                                ; it): its "ZM" gone, so F5 loads it again
+                                ; from this disk, with a clear screen
 
         lda #1                  ; white border and background
         sta $d020

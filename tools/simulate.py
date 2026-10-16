@@ -1382,6 +1382,22 @@ def main():
     check("S: where each kind of instruction goes next (JR, DJNZ, CALL, RET, JP (HL), RST ...); "
           "RST $38, a call into zx64 and JR to itself refused", not bad, f"wrong: {bad}")
 
+    m = Machine(int_wired=True)                  # a C64 reset keeps RAM: the last
+    m.ram[0x4000:0x4000 + len(mon) - 2] = mon[2:]   # session's monitor, its screen
+    m.ram[0xF000:0xF000 + len(mon2) - 2] = mon2[2:]  # cleared once (inited), and
+    m.ram[mlb["inited"] + 0x1000] = 1                 # BASIC's text on it
+    m.ram[mlb["crow"] + 0x1000] = 12
+    m.ram[0x0400:0x0400 + 19] = bytes(ord(c) & 0x3F for c in "THE QUICK BROWN FOX")
+    m.boot()
+    m.drive.files[b"ZX64MON"] = mon
+    m.drive.files[b"ZX64MON2"] = mon2
+    opens = m.drive.opens
+    m.tap("F5")
+    scr = m.mscreen()
+    check("after a C64 reset: F5 loads zx64mon again (not the one left in RAM), on a clear screen",
+          m.drive.opens == opens + 2 and scr[0].startswith("ZX64MON") and not any("FOX" in r for r in scr),
+          f"{m.drive.opens - opens} opens, {scr[:3]}")
+
     m = Machine(int_wired=True)                  # a program running: F5 stops it
     m.boot()
     m.drive.files[b"ZX64MON"] = mon
