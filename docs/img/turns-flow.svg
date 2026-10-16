@@ -1,0 +1,50 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 820 230" font-family="-apple-system, Segoe UI, Helvetica, Arial, sans-serif" font-size="14">
+  <defs>
+    <marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#555"/>
+    </marker>
+    <style>
+      .c64{fill:#f4f6f8;stroke:#8a96a3;stroke-width:1.2}
+      .z80{fill:#eaf2ff;stroke:#4a78c2;stroke-width:1.2}
+      .t{fill:#1f2328;text-anchor:middle}
+      .lane{fill:#1f2328;font-weight:600}
+      .b{font-weight:600}
+      .s{fill:#57606a;font-size:12.5}
+      .w{stroke:#c9d1d9;stroke-width:2;stroke-dasharray:4 5}
+      .l{stroke:#555;stroke-width:1.5;fill:none;marker-end:url(#a)}
+    </style>
+  </defs>
+  <rect width="820" height="230" rx="10" fill="#ffffff"/>
+
+  <text class="lane" x="20" y="65">6510</text>
+  <text class="lane" x="20" y="155">Z80</text>
+
+  <rect class="c64" x="70" y="38" width="150" height="46" rx="8"/>
+  <text class="t b" x="145" y="58">Boots</text>
+  <text class="t s" x="145" y="75">sets up the VIC</text>
+  <line class="w" x1="220" y1="61" x2="470" y2="61"/>
+  <rect class="c64" x="470" y="38" width="140" height="46" rx="8"/>
+  <text class="t b" x="540" y="58">Loads MAZOGS</text>
+  <text class="t s" x="540" y="75">from the disk</text>
+  <line class="w" x1="610" y1="61" x2="800" y2="61"/>
+
+  <line class="w" x1="70" y1="151" x2="240" y2="151"/>
+  <rect class="z80" x="240" y="128" width="210" height="46" rx="8"/>
+  <text class="t b" x="345" y="148">The ZX81 starts</text>
+  <text class="t s" x="345" y="165">you type LOAD "MAZOGS"</text>
+  <line class="w" x1="450" y1="151" x2="630" y2="151"/>
+  <rect class="z80" x="630" y="128" width="170" height="46" rx="8"/>
+  <text class="t b" x="715" y="148">Mazogs runs</text>
+  <text class="t s" x="715" y="165">the 6510 waits</text>
+
+  <path class="l" d="M220,84 L240,126"/>
+  <path class="l" d="M450,128 L470,86"/>
+  <path class="l" d="M610,84 L630,126"/>
+
+  <text class="t s" x="210" y="112">$DE00</text>
+  <text class="t s" x="490" y="112">$DE00</text>
+  <text class="t s" x="642" y="112">$DE00</text>
+
+  <path class="l" d="M70,205 H800"/>
+  <text class="s" x="70" y="198">time</text>
+</svg>

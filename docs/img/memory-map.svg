@@ -1,0 +1,61 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 420" font-family="-apple-system, Segoe UI, Helvetica, Arial, sans-serif" font-size="14">
+  <defs>
+    <style>
+      .rom{fill:#eaf2ff;stroke:#4a78c2;stroke-width:1.2}
+      .ram{fill:#f5f9ff;stroke:#4a78c2;stroke-width:1.2;stroke-dasharray:5 3}
+      .z{fill:#fff4e5;stroke:#e08a1e;stroke-width:1.2}
+      .c64{fill:#f4f6f8;stroke:#8a96a3;stroke-width:1.2}
+      .t{fill:#1f2328}
+      .b{font-weight:600}
+      .a{fill:#57606a;font-size:12.5;font-family:ui-monospace, SFMono-Regular, Menlo, monospace}
+      .h{fill:#57606a;font-size:12.5}
+    </style>
+  </defs>
+  <rect width="640" height="420" rx="10" fill="#ffffff"/>
+
+  <text class="h" x="40" y="30">Z80</text>
+  <text class="h" x="560" y="30">C64</text>
+
+  <!-- 16 rows of 4K, 22 px each, from y=40 -->
+  <rect class="rom" x="100" y="40" width="440" height="44"/>
+  <text class="t b" x="116" y="67">The ZX81 ROM, patched</text>
+  <rect class="z" x="100" y="84" width="440" height="22"/>
+  <text class="t" x="116" y="100">zx64, keyboard rows, mailbox to the 6510</text>
+  <rect class="z" x="100" y="106" width="440" height="22"/>
+  <text class="t" x="116" y="122">zx64mon, the monitor (once F5 has loaded it)</text>
+  <rect class="rom" x="100" y="128" width="440" height="88"/>
+  <text class="t b" x="116" y="168">ZX81 RAM, 16K</text>
+  <text class="h" x="116" y="186">BASIC: programs, variables, the display file</text>
+  <rect class="ram" x="100" y="216" width="440" height="88"/>
+  <text class="t b" x="116" y="256">16K more in 32K mode (F3)</text>
+  <rect class="c64" x="100" y="304" width="440" height="22"/>
+  <text class="t" x="116" y="320">The C64's I/O chips: VIC, SID, CIAs, the CPU switch</text>
+  <rect class="z" x="100" y="326" width="440" height="22"/>
+  <text class="t" x="116" y="342">The VIC's screen and the ZX81 font</text>
+  <rect class="z" x="100" y="348" width="440" height="22"/>
+  <text class="t" x="116" y="364">zx64mon, second part</text>
+  <rect class="c64" x="100" y="370" width="440" height="22"/>
+  <text class="t" x="116" y="386">The 6510's own page: its loader, the monitor's screen</text>
+
+  <text class="a" x="40" y="45">0000</text>
+  <text class="a" x="40" y="89">2000</text>
+  <text class="a" x="40" y="111">3000</text>
+  <text class="a" x="40" y="133">4000</text>
+  <text class="a" x="40" y="221">8000</text>
+  <text class="a" x="40" y="309">C000</text>
+  <text class="a" x="40" y="331">D000</text>
+  <text class="a" x="40" y="353">E000</text>
+  <text class="a" x="40" y="375">F000</text>
+  <text class="a" x="40" y="397">FFFF</text>
+
+  <text class="a" x="560" y="45">1000</text>
+  <text class="a" x="560" y="89">3000</text>
+  <text class="a" x="560" y="111">4000</text>
+  <text class="a" x="560" y="133">5000</text>
+  <text class="a" x="560" y="221">9000</text>
+  <text class="a" x="560" y="309">D000</text>
+  <text class="a" x="560" y="331">E000</text>
+  <text class="a" x="560" y="353">F000</text>
+  <text class="a" x="560" y="375">0000</text>
+  <text class="a" x="560" y="397">0FFF</text>
+</svg>

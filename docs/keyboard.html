@@ -1,0 +1,363 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<!-- zx64: the ZX81's key legends on the C64 keyboard, as zx64 maps them.
+     Open in a browser. Legends decoded from the ZX81 ROM's key tables;
+     no ROM bytes in here. -->
+<title>zx64 Keyboard Overlay</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;600;800&family=Archivo+Narrow:wght@500;600;700&family=JetBrains+Mono:wght@500&display=swap">
+<style>
+/* Layout: one column; a fixed "membrane" keyboard panel (scrolls sideways on phones), then modes and an index. */
+:root{
+  --bg:#eef0f1; --fg:#16181a; --muted:#5b6168; --line:#d3d7db; --surface:#ffffff; --accent:#c8261c; --hl:#f2c200;
+  --kb-bg:#111214; --cap:#26272a; --cap-edge:#3a3c40; --cap-dead:#18191b; --leg:#f3f1ec; --kw:#e7e4dd; --shift:#ff4b3e; --fn:#8fb7d9; --dead:#55595f;
+  --f-display:"Archivo",system-ui,sans-serif; --f-key:"Archivo Narrow","Arial Narrow",system-ui,sans-serif; --f-mono:"JetBrains Mono",ui-monospace,Menlo,monospace;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){--bg:#0f1012;--fg:#e6e8ea;--muted:#9aa1a8;--line:#2a2e33;--surface:#181a1d;--accent:#ff5a4a;--hl:#ffd23a;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#0f1012;--fg:#e6e8ea;--muted:#9aa1a8;--line:#2a2e33;--surface:#181a1d;--accent:#ff5a4a;--hl:#ffd23a;color-scheme:dark}
+body{background:var(--bg);color:var(--fg);font-family:var(--f-display);font-size:15px;line-height:1.5}
+.wrap{max-width:1120px;margin:0 auto;padding:28px 16px 48px;display:grid;gap:28px}
+header{display:grid;gap:6px}
+h1{font-size:clamp(26px,4vw,38px);font-weight:800;letter-spacing:-.01em;margin:0;text-wrap:balance}
+h1 span{color:var(--accent)}
+.lede{margin:0;color:var(--muted);max-width:68ch}
+h2{font-size:12px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);margin:0 0 10px;font-weight:600}
+code,kbd{font-family:var(--f-mono);font-size:.88em}
+kbd{border:1px solid var(--line);border-bottom-width:2px;border-radius:4px;padding:0 5px;background:var(--surface);white-space:nowrap}
+
+/* finder */
+.find{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
+.find input{font:600 16px var(--f-display);padding:9px 12px;border:1px solid var(--line);border-radius:6px;background:var(--surface);color:var(--fg);width:min(320px,100%)}
+.find input:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
+.chips{display:flex;flex-wrap:wrap;gap:6px}
+.chips button{font:500 13px var(--f-mono);padding:4px 9px;border-radius:999px;border:1px solid var(--line);background:transparent;color:var(--fg);cursor:pointer}
+.chips button:hover,.chips button:focus-visible{border-color:var(--accent);outline:none}
+.answers{margin:10px 0 0;padding:0;list-style:none;display:grid;gap:4px;min-height:1.5em}
+.answers li{display:flex;gap:10px;flex-wrap:wrap;align-items:baseline}
+.answers b{font-family:var(--f-mono);min-width:7ch}
+.answers .none{color:var(--muted)}
+
+/* keyboard */
+.kbwrap{overflow-x:auto;border-radius:10px;background:var(--kb-bg);-webkit-overflow-scrolling:touch}
+.kb{--u:62px;--g:6px;padding:18px 18px 22px;display:grid;gap:4px;width:max-content}
+.row{display:flex;gap:var(--g)}
+.k{width:calc(var(--u)*var(--w,1) + var(--g)*(var(--w,1) - 1));display:grid;grid-template-rows:15px 52px 15px;gap:2px;font-family:var(--f-key)}
+.k .kw,.k .fn{font-size:10.5px;font-weight:600;letter-spacing:.03em;text-align:center;white-space:nowrap;overflow:hidden;line-height:15px}
+.k .kw{color:var(--kw)}
+.k .fn{color:var(--fn)}
+.cap{position:relative;background:var(--cap);border:1px solid var(--cap-edge);border-radius:5px;box-shadow:inset 0 -3px 0 rgba(0,0,0,.35)}
+.cap .m{position:absolute;left:7px;top:5px;font-size:21px;font-weight:700;color:var(--leg);line-height:1}
+.cap .m.small{font-size:12px;top:7px;letter-spacing:.04em}
+.cap .s{position:absolute;right:6px;top:6px;font-size:12px;font-weight:700;color:var(--shift);line-height:1;text-align:right;max-width:calc(100% - 26px)}
+.cap .s.long{font-size:9.5px;letter-spacing:.02em}
+.cap .sub{position:absolute;left:7px;top:23px;font-size:10px;font-weight:700;color:var(--shift);letter-spacing:.03em;white-space:nowrap;line-height:1}
+.cap .c64{position:absolute;left:7px;bottom:5px;font-size:9px;color:#8a8e94;letter-spacing:.04em;text-transform:uppercase}
+.cap svg{position:absolute;right:6px;bottom:6px;width:14px;height:14px;shape-rendering:crispEdges}
+.k.dead .cap{background:var(--cap-dead);border-style:dashed;border-color:#2c2e31;box-shadow:none}
+.k.dead .cap .m{color:var(--dead);font-size:12px;top:7px}
+.k.extra .cap{border-color:#6b4a1e}
+.k.extra .cap .m.small{color:#f5c56b}
+.k.hit .cap{outline:3px solid var(--hl);outline-offset:1px}
+.k.hit .kw.on,.k.hit .fn.on{color:var(--hl)}
+.space-row{padding-left:calc(var(--u)*3.6)}
+.fgap{flex:1 0 calc(var(--u)*.6)}
+
+/* key anatomy legend */
+.anat{display:flex;flex-wrap:wrap;gap:14px 26px;align-items:center;font-size:14px}
+.sw{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:6px;vertical-align:baseline}
+
+/* modes */
+.modes{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:12px}
+.mode{border:1px solid var(--line);border-radius:8px;padding:12px 14px;background:var(--surface);display:grid;gap:4px;align-content:start}
+.mode .tag{font:700 13px var(--f-mono);display:inline-grid;place-items:center;width:22px;height:22px;background:var(--fg);color:var(--bg);border-radius:3px}
+.mode .tag.inv{background:var(--bg);color:var(--fg);outline:1px solid var(--fg)}
+.mode h3{margin:0;font-size:15px;display:flex;gap:8px;align-items:center}
+.mode p{margin:0;color:var(--muted);font-size:14px}
+
+/* index */
+.index{display:grid;grid-template-columns:repeat(auto-fit,minmax(250px,1fr));gap:20px}
+.index table{width:100%;border-collapse:collapse;font-size:14px}
+.index td{padding:3px 0;border-bottom:1px solid var(--line);vertical-align:baseline}
+.index td:first-child{font-family:var(--f-mono);font-weight:500;padding-right:10px}
+.index td:last-child{text-align:right;color:var(--muted);white-space:nowrap}
+.index h3{margin:0 0 6px;font-size:14px}
+.index h3 .sw{margin-right:8px}
+
+/* zx64 extras */
+.extras{width:100%;border-collapse:collapse;font-size:14px}
+.extras th{text-align:left;font-weight:600;color:var(--muted);font-size:12px;letter-spacing:.06em;text-transform:uppercase;padding:0 12px 6px 0;border-bottom:1px solid var(--line)}
+.extras td{padding:6px 12px 6px 0;border-bottom:1px solid var(--line);vertical-align:top}
+.tbl{overflow-x:auto}
+footer{color:var(--muted);font-size:13px;max-width:72ch}
+@media (prefers-reduced-motion:no-preference){.k .cap{transition:outline-color .15s}}
+
+/* print: black on white, A4 landscape, no finder. docs/keyboard.pdf is this,
+   printed by Chrome: chrome --headless --no-pdf-header-footer
+   --virtual-time-budget=8000 --print-to-pdf=docs/keyboard.pdf docs/keyboard.html */
+@media print{
+  @page{size:A4 landscape;margin:10mm}
+  :root,:root:not([data-theme="light"]),:root[data-theme="dark"]{
+    --bg:#fff;--fg:#000;--muted:#333;--line:#999;--surface:#fff;--accent:#000;
+    --kb-bg:#fff;--cap:#fff;--cap-edge:#000;--cap-dead:#fff;--leg:#000;--kw:#000;--shift:#000;--fn:#000;--dead:#999;
+    color-scheme:light}
+  body{font-size:12px}
+  .wrap{max-width:none;padding:0;gap:12px}
+  section[aria-labelledby="h-find"]{display:none}
+  .kb{--u:55px;--g:5px;padding:0}
+  .k{grid-template-rows:13px 52px 13px}
+  .cap .s.long{font-size:7.5px;letter-spacing:0;right:4px}
+  .cap .sub{font-size:9px;top:21px;line-height:1}
+  .cap .c64{font-size:8px;letter-spacing:0;white-space:nowrap;line-height:1}
+  .k .kw,.k .fn{font-size:9.5px;line-height:13px}
+  .noprint{display:none}
+  header .lede{font-size:11px}
+  h1{font-size:24px}
+  h2{margin-bottom:6px}
+  .anat{font-size:11px;gap:4px 18px}
+  .modes{grid-template-columns:repeat(4,1fr);gap:8px}
+  .mode{padding:6px 9px}
+  .mode p{font-size:10.5px;line-height:1.35}
+  .mode h3{font-size:12px}
+  .extras{font-size:10.5px}
+  .extras td{padding:2px 10px 2px 0}
+  .index{grid-template-columns:repeat(3,1fr);gap:16px}
+  .index table{font-size:9.5px}
+  .index tbody{display:block;columns:2;column-gap:12px}
+  .index tr{display:flex;justify-content:space-between;break-inside:avoid;border-bottom:1px solid var(--line)}
+  .index td{border:0;padding:0}
+  footer{font-size:10px}
+  .cap{box-shadow:none}
+  .k .fn{font-style:italic}
+  .k.extra .cap{border-width:2px;border-color:#000}
+  .k.extra .cap .m.small{color:#000}
+  .k.dead .cap{border-color:#999}
+  .cap .c64{color:#555;bottom:5px}
+  .cap svg{filter:invert(1)}
+  .anat .sw{display:none}
+  section{break-inside:avoid}
+  section[aria-labelledby="h-x"]{break-before:page}
+  kbd{border-color:#666}
+}
+</style>
+</head>
+<body>
+<div class="wrap">
+<header>
+  <h1>zx64 <span>keyboard</span></h1>
+  <p class="lede">The ZX81's legends on the C64 keys. Letters, digits and <kbd>.</kbd> are where the C64 has them; everything else is the ZX81's own SHIFT, keyword and function layer. Read from your ROM's key tables.</p>
+</header>
+
+<section aria-labelledby="h-find">
+  <h2 id="h-find">Find a key</h2>
+  <div class="find">
+    <input id="q" type="search" aria-label="Keyword or symbol" placeholder="PRINT, &quot;, <=, INKEY$ …" autocomplete="off" spellcheck="false">
+    <div class="chips" id="chips"></div>
+  </div>
+  <ul class="answers" id="answers" aria-live="polite"></ul>
+</section>
+
+<section aria-labelledby="h-kb">
+  <h2 id="h-kb">On the C64 keyboard</h2>
+  <div class="kbwrap"><div class="kb" id="kb"></div></div>
+  <div class="anat" style="margin-top:12px">
+    <span><span class="sw" style="background:#e7e4dd;outline:1px solid #888"></span>above the key: keyword, at the <b>K</b> cursor</span>
+    <span><span class="sw" style="background:#ff4b3e"></span>top right<span class="noprint"> (red)</span>: with SHIFT</span>
+    <span><span class="sw" style="background:#8fb7d9"></span>below the key: function, after SHIFT RETURN</span>
+    <span><span class="sw" style="background:#555;outline:1px solid #aaa"></span>bottom right: block graphic, SHIFT in graphics mode</span>
+    <span><span class="sw" style="border:1px dashed var(--muted)"></span>dashed: not used</span>
+  </div>
+</section>
+
+<section aria-labelledby="h-modes">
+  <h2 id="h-modes">The cursor tells you what a key gives</h2>
+  <div class="modes">
+    <div class="mode"><h3><span class="tag inv">K</span>Keyword</h3><p>Start of a line, or after THEN. A letter gives the keyword above it: <kbd>P</kbd> is PRINT, <kbd>K</kbd> is LIST. Digits give a line number.</p></div>
+    <div class="mode"><h3><span class="tag inv">L</span>Letters</h3><p>Everywhere else. Keys give their letter; SHIFT gives the red legend: <kbd>SHIFT</kbd> <kbd>P</kbd> is <code>"</code>, <kbd>SHIFT</kbd> <kbd>L</kbd> is <code>=</code>.</p></div>
+    <div class="mode"><h3><span class="tag inv">F</span>Function</h3><p><kbd>SHIFT</kbd> <kbd>RETURN</kbd>, then one key: the function below it. <kbd>B</kbd> is INKEY$, <kbd>T</kbd> is RND, <kbd>M</kbd> is PI.</p></div>
+    <div class="mode"><h3><span class="tag inv">G</span>Graphics</h3><p><kbd>SHIFT</kbd> <kbd>9</kbd> in, <kbd>SHIFT</kbd> <kbd>9</kbd> out. Plain keys give inverse characters; SHIFT gives the block graphic in the key's corner.</p></div>
+  </div>
+</section>
+
+<section aria-labelledby="h-x">
+  <h2 id="h-x">C64 keys that zx64 adds</h2>
+  <div class="tbl"><table class="extras">
+    <thead><tr><th>C64 key</th><th>ZX81</th></tr></thead>
+    <tbody>
+      <tr><td><kbd>RETURN</kbd></td><td>NEWLINE. <kbd>SHIFT</kbd> <kbd>RETURN</kbd> is FUNCTION</td></tr>
+      <tr><td><kbd>INST/DEL</kbd></td><td>RUBOUT (the ZX81's <kbd>SHIFT</kbd> <kbd>0</kbd>)</td></tr>
+      <tr><td><kbd>CRSR ⇕</kbd> <kbd>CRSR ⇔</kbd></td><td>Down and right; with SHIFT, up and left (the ZX81's SHIFT 6, 8, 7, 5)</td></tr>
+      <tr><td><kbd>←</kbd> <kbd>↑</kbd></td><td>Cursor left and up</td></tr>
+      <tr><td><kbd>SPACE</kbd> <kbd>RUN/STOP</kbd></td><td>BREAK while a program runs</td></tr>
+      <tr><td><kbd>SHIFT LOCK</kbd></td><td>Holds the left SHIFT down, as on the C64</td></tr>
+      <tr><td><kbd>SHIFT 1</kbd></td><td>EDIT: brings the current line down to be changed</td></tr>
+      <tr><td><kbd>F1</kbd></td><td>Type-ahead on or off. On (the default), every key is taken however fast you type, as on a C64; off, the ROM's own way: one key at a time, all keys up in between. The top row says which, for 2 seconds</td></tr>
+      <tr><td><kbd>F2</kbd></td><td>(SHIFT+F1) The colours: black on white, white on black, green screen, amber, black on green, the C64's own. The top row names each; F7, F3 and the monitor keep it</td></tr>
+      <tr><td><kbd>F3</kbd></td><td>Memory: 16K, 32K, 1K, 16K again. Like swapping the RAM pack with the power off: the ZX81 starts again and the program is gone. The top row says the size</td></tr>
+      <tr><td><kbd>F5</kbd></td><td>The machine code monitor: stops the ZX81 where it is and shows its registers, on a C64 screen of its own. F5 again, or X, carries on</td></tr>
+      <tr><td><kbd>F7</kbd></td><td>Reset: the ZX81 starts again, as at power on, when the key comes up. Works at the prompt, in SLOW mode, and between BASIC statements in FAST mode</td></tr>
+    </tbody>
+  </table></div>
+</section>
+
+<section aria-labelledby="h-idx">
+  <h2 id="h-idx">Index</h2>
+  <div class="index" id="index"></div>
+</section>
+
+<footer>Legends are decoded from the ROM's tables (K-UNSHIFT, K-SHIFT, K-FUNCT, K-GRAPH and the token table), so they match what your zx64 build does. The C64's own <kbd>+</kbd> <kbd>-</kbd> <kbd>=</kbd> <kbd>:</kbd> and so on do nothing: use the ZX81's SHIFT legends.</footer>
+</div>
+
+<script>
+// ZX81 legends per key (from the ROM's tables K-UNSHIFT, K-SHIFT, K-FUNCT,
+// K-GRAPH and the token table): kw at the K cursor, sh with SHIFT, fn after
+// FUNCTION, gr the graphics-mode character code
+const K = {"Z":{"sh":":","kw":"COPY","fn":"LN"},
+  "X":{"sh":";","kw":"CLEAR","fn":"EXP"},
+  "C":{"sh":"?","kw":"CONT","fn":"AT"},
+  "V":{"sh":"/","kw":"CLS"},
+  "A":{"sh":"STOP","kw":"NEW","fn":"ASN","gr":8},
+  "S":{"sh":"LPRINT","kw":"SAVE","fn":"ACS","gr":10},
+  "D":{"sh":"SLOW","kw":"DIM","fn":"ATN","gr":9},
+  "F":{"sh":"FAST","kw":"FOR","fn":"SGN","gr":138},
+  "G":{"sh":"LLIST","kw":"GOTO","fn":"ABS","gr":137},
+  "Q":{"sh":"\"\"","kw":"PLOT","fn":"SIN","gr":129},
+  "W":{"sh":"OR","kw":"UNPLOT","fn":"COS","gr":130},
+  "E":{"sh":"STEP","kw":"REM","fn":"TAN","gr":7},
+  "R":{"sh":"<=","kw":"RUN","fn":"INT","gr":132},
+  "T":{"sh":"<>","kw":"RAND","fn":"RND","gr":6},
+  "1":{"sh":"EDIT","gr":1},
+  "2":{"sh":"AND","gr":2},
+  "3":{"sh":"THEN","gr":135},
+  "4":{"sh":"TO","gr":4},
+  "5":{"sh":"←","gr":5},
+  "0":{"sh":"RUBOUT"},
+  "9":{"sh":"GRAPHICS"},
+  "8":{"sh":"→","gr":133},
+  "7":{"sh":"↑","gr":3},
+  "6":{"sh":"↓","gr":131},
+  "P":{"sh":"\"","kw":"PRINT","fn":"TAB"},
+  "O":{"sh":")","kw":"POKE","fn":"PEEK"},
+  "I":{"sh":"(","kw":"INPUT","fn":"CODE"},
+  "U":{"sh":"$","kw":"IF","fn":"CHR$"},
+  "Y":{"sh":">=","kw":"RETURN","fn":"STR$","gr":134},
+  "NEWLINE":{"sh":"FUNCTION"},
+  "L":{"sh":"=","kw":"LET","fn":"USR"},
+  "K":{"sh":"+","kw":"LIST","fn":"LEN"},
+  "J":{"sh":"-","kw":"LOAD","fn":"VAL"},
+  "H":{"sh":"**","kw":"GOSUB","fn":"SQR","gr":136},
+  "SPACE":{"sh":"£"},
+  ".":{"sh":","},
+  "M":{"sh":">","kw":"PAUSE","fn":"PI"},
+  "N":{"sh":"<","kw":"NEXT","fn":"NOT"},
+  "B":{"sh":"*","kw":"SCROLL","fn":"INKEY$"}};
+const rows = [
+  [{c:'←',x:'← left'},'1','2','3','4','5','6','7','8','9','0',{c:'+'},{c:'-'},{c:'£'},{c:'CLR HOME'},{c:'INST DEL',x:'RUBOUT'},{c:'F1',x:'TYPE-AHEAD',sub:'⇧ COLOURS',f:1,w:1.5}],
+  [{c:'CTRL',w:1.5},'Q','W','E','R','T','Y','U','I','O','P',{c:'@'},{c:'*'},{c:'↑',x:'↑ up'},{c:'RESTORE',w:1.5},{c:'F3',x:'RAM SIZE',f:1,w:1.5}],
+  [{c:'RUN STOP',x:'BREAK',w:1.25},{c:'SHIFT LOCK',x:'SHIFT lock'},'A','S','D','F','G','H','J','K','L',{c:':'},{c:';'},{c:'='},{z:'NEWLINE',c:'RETURN',w:1.75},{c:'F5',x:'MONITOR',f:1,w:1.5}],
+  [{c:'C='},{c:'SHIFT',x:'SHIFT',w:1.75},'Z','X','C','V','B','N','M',{c:','},'.',{c:'/'},{c:'SHIFT',x:'SHIFT',w:1.25},{c:'CRSR ⇕',x:'↓ ⇧↑'},{c:'CRSR ⇔',x:'→ ⇧←'},{c:'F7',x:'RESET',f:1,w:1.5}],
+  [{z:'SPACE',c:'also BREAK',w:9}]
+];
+const capName = z => z==='NEWLINE' ? 'RETURN' : z;
+const el = (t,cls,txt) => { const e=document.createElement(t); if(cls) e.className=cls; if(txt!=null) e.textContent=txt; return e; };
+
+// The ZX81's block graphics, codes 0-10: quadrants top left (bit 0), top
+// right (bit 1) and bottom left (bit 2), or a grey checker (8 all, 9 the
+// bottom half, 10 the top half); bit 7 inverts. The same as the ROM's font.
+function glyphBytes(c){
+  if(c < 8){ const top = (c&1 ? 0xF0 : 0) | (c&2 ? 0x0F : 0), bot = c&4 ? 0xF0 : 0; return [top,top,top,top,bot,bot,bot,bot]; }
+  const g = [0xAA,0x55,0xAA,0x55], z = [0,0,0,0];
+  return c === 8 ? g.concat(g) : c === 9 ? z.concat(g) : g.concat(z);
+}
+function glyph(code){
+  const inv = code & 0x80, bytes = glyphBytes(code & 0x7f);
+  const ns='http://www.w3.org/2000/svg', s=document.createElementNS(ns,'svg');
+  s.setAttribute('viewBox','-0.5 -0.5 9 9'); s.setAttribute('aria-hidden','true');
+  const fr=document.createElementNS(ns,'rect');
+  Object.entries({x:-0.5,y:-0.5,width:9,height:9,fill:'#111214',stroke:'#6b6f75','stroke-width':0.5}).forEach(([a,v])=>fr.setAttribute(a,v)); s.appendChild(fr);
+  bytes.forEach((b,y)=>{ if(inv) b^=0xff; for(let x=0;x<8;x++) if(b&(0x80>>x)){ const r=document.createElementNS(ns,'rect');
+    r.setAttribute('x',x); r.setAttribute('y',y); r.setAttribute('width',1); r.setAttribute('height',1); r.setAttribute('fill','#f3f1ec'); s.appendChild(r);} });
+  return s;
+}
+
+const keyEls = {};
+const kb = document.getElementById('kb');
+rows.forEach((row,ri)=>{
+  const r = el('div','row'+(ri===4?' space-row':''));
+  row.forEach(spec=>{
+    if(typeof spec==='string') spec={z:spec};
+    if(spec.f) r.appendChild(el('div','fgap'));     // the function keys stand apart
+    const k = el('div','k'); k.style.setProperty('--w', spec.w||1);
+    const z = spec.z && K[spec.z];
+    const kw = el('div','kw', z && z.kw || ''), cap = el('div','cap'), fn = el('div','fn', z && z.fn || '');
+    if(z){
+      cap.appendChild(el('span', spec.z.length>1 ? 'm small' : 'm', spec.z));
+      if(z.sh) cap.appendChild(el('span', z.sh.length>2 ? 's long' : 's', z.sh));
+      if(z.gr!=null) cap.appendChild(glyph(z.gr));
+      if(spec.c) cap.appendChild(el('span','c64',spec.c));
+      keyEls[spec.z] = k;
+    } else if(spec.x){
+      k.classList.add('extra');
+      cap.appendChild(el('span','m small',spec.x));
+      if(spec.sub) cap.appendChild(el('span','sub',spec.sub));
+      cap.appendChild(el('span','c64',spec.c));
+      keyEls['x:'+spec.x] = k;
+    } else {
+      k.classList.add('dead');
+      cap.appendChild(el('span','m',spec.c));
+    }
+    k.append(kw,cap,fn); r.appendChild(k);
+  });
+  kb.appendChild(r);
+});
+
+/* everything you can type, and how */
+const entries = [];
+Object.entries(K).forEach(([z,d])=>{
+  const n = capName(z);
+  if(z.length===1) entries.push({label:z, how:`${n}`, key:z});
+  if(d.kw) entries.push({label:d.kw, how:`at the K cursor: ${n}`, key:z, part:'kw', group:'kw'});
+  if(d.sh) entries.push({label:d.sh, how:`SHIFT ${n}`, key:z, group:'sh'});
+  if(d.fn) entries.push({label:d.fn, how:`SHIFT RETURN, then ${n}`, key:z, part:'fn', group:'fn'});
+});
+entries.push({label:'RUBOUT', how:'INST/DEL', key:'x:RUBOUT'});
+entries.push({label:'BREAK', how:'SPACE or RUN/STOP, while a program runs', key:'x:BREAK'});
+entries.push({label:'NEWLINE', how:'RETURN', key:'NEWLINE'});
+entries.push({label:'SPACE', how:'SPACE', key:'SPACE'});
+
+const q = document.getElementById('q'), answers = document.getElementById('answers');
+function find(raw){
+  const s = raw.trim().toUpperCase();
+  Object.values(keyEls).forEach(k=>{ k.classList.remove('hit'); k.querySelectorAll('.on').forEach(e=>e.classList.remove('on')); });
+  answers.replaceChildren();
+  if(!s) return;
+  let hits = entries.filter(e=>e.label.toUpperCase()===s);
+  if(!hits.length && s.length>1) hits = entries.filter(e=>e.label.toUpperCase().startsWith(s));
+  if(!hits.length){ answers.appendChild(el('li','none',`Nothing gives “${raw.trim()}”. The ZX81 has no ${raw.trim()} key or keyword.`)); return; }
+  hits.slice(0,8).forEach(h=>{
+    const li = el('li'); li.append(el('b',null,h.label), el('span',null,h.how)); answers.appendChild(li);
+    const k = keyEls[h.key]; if(k){ k.classList.add('hit'); if(h.part) k.querySelector('.'+h.part).classList.add('on'); }
+  });
+}
+q.addEventListener('input', ()=>find(q.value));
+const chips = document.getElementById('chips');
+['PRINT','"','=','<=','INKEY$','RUBOUT','EDIT','**'].forEach(t=>{
+  const b = el('button',null,t); b.type='button';
+  b.addEventListener('click',()=>{ q.value=t; find(t); q.focus(); }); chips.appendChild(b);
+});
+
+/* index */
+const idx = document.getElementById('index');
+[['sh','With SHIFT','#ff4b3e'],['kw','At the K cursor','#e7e4dd'],['fn','After SHIFT RETURN','#8fb7d9']].forEach(([g,title,col])=>{
+  const box = el('div'); const h = el('h3'); const sw = el('span','sw'); sw.style.background=col; sw.style.outline='1px solid #888'; h.append(sw, title); box.appendChild(h);
+  const t = el('table'), tb = el('tbody');
+  entries.filter(e=>e.group===g).sort((a,b)=>a.label.localeCompare(b.label)).forEach(e=>{
+    const tr = el('tr'); tr.append(el('td',null,e.label), el('td',null,capName(e.key))); tb.appendChild(tr);
+  });
+  t.appendChild(tb); box.appendChild(t); idx.appendChild(box);
+});
+</script>
+</body>
+</html>

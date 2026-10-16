@@ -1,0 +1,22 @@
+# build output: it contains your ROM
+build/
+__pycache__/
+
+# your ZX81 ROM, and the .p files you keep around: not ours to publish
+*.rom
+*.p
+*.P
+
+.DS_Store
+
+# previews saved by the Claude desktop app
+Claude outputs/
+
+# notes for future Claude sessions, not published
+notes/
+
+# python venv for make test
+.venv/
+
+# ours: the ROM dump for a ZXpand (rom/README.md)
+!rom/romdump.p

@@ -1,0 +1,63 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 820 300" font-family="-apple-system, Segoe UI, Helvetica, Arial, sans-serif" font-size="14">
+  <defs>
+    <marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#555"/>
+    </marker>
+    <style>
+      .box{fill:#f4f6f8;stroke:#8a96a3;stroke-width:1.2}
+      .z{fill:#fff4e5;stroke:#e08a1e;stroke-width:1.5}
+      .rom{fill:#eaf2ff;stroke:#4a78c2;stroke-width:1.2}
+      .t{fill:#1f2328;text-anchor:middle}
+      .b{font-weight:600}
+      .s{fill:#57606a;font-size:12.5}
+      .l{stroke:#555;stroke-width:1.5;fill:none;marker-end:url(#a)}
+    </style>
+  </defs>
+  <rect width="820" height="300" rx="10" fill="#ffffff"/>
+
+  <rect class="box" x="20" y="30" width="150" height="74" rx="8"/>
+  <text class="t b" x="95" y="62">You press P</text>
+  <text class="t s" x="95" y="82">on the C64</text>
+
+  <rect class="box" x="215" y="30" width="170" height="74" rx="8"/>
+  <text class="t b" x="300" y="56">C64 keyboard</text>
+  <text class="t s" x="300" y="76">8 × 8 grid of keys,</text>
+  <text class="t s" x="300" y="93">read through the CIA chip</text>
+
+  <rect class="z" x="430" y="30" width="170" height="74" rx="8"/>
+  <text class="t b" x="515" y="56">zx64</text>
+  <text class="t s" x="515" y="76">C64 key → ZX81 key,</text>
+  <text class="t s" x="515" y="93">50 times a second</text>
+
+  <rect class="rom" x="645" y="30" width="155" height="74" rx="8"/>
+  <text class="t b" x="722" y="56">ZX81 keyboard</text>
+  <text class="t s" x="722" y="76">8 rows of 5 keys,</text>
+  <text class="t s" x="722" y="93">where the ROM looks</text>
+
+  <path class="l" d="M170,67 H213"/>
+  <path class="l" d="M385,67 H428"/>
+  <path class="l" d="M600,67 H643"/>
+
+  <path class="l" d="M722,104 V140 H135 V178"/>
+  <path class="l" d="M722,140 V178"/>
+  <path class="l" d="M430,140 V178"/>
+
+  <rect class="rom" x="40" y="180" width="190" height="96" rx="8"/>
+  <text class="t b" x="135" y="206">The editor, INPUT</text>
+  <text class="t s" x="135" y="230">the ROM's, fed keys</text>
+  <text class="t s" x="135" y="247">in order by zx64's</text>
+  <text class="t s" x="135" y="264">type-ahead queue</text>
+
+  <rect class="rom" x="330" y="180" width="200" height="96" rx="8"/>
+  <text class="t b" x="430" y="206">LAST_K, INKEY$</text>
+  <text class="t s" x="430" y="230">what most games</text>
+  <text class="t s" x="430" y="247">and BASIC programs</text>
+  <text class="t s" x="430" y="264">read</text>
+
+  <rect class="rom" x="620" y="180" width="185" height="96" rx="8"/>
+  <text class="t b" x="712" y="206">IN A,($FE)</text>
+  <text class="t s" x="712" y="230">games that read</text>
+  <text class="t s" x="712" y="247">the keyboard</text>
+  <text class="t s" x="712" y="264">hardware themselves</text>
+
+</svg>

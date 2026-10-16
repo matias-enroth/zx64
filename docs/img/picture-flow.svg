@@ -1,0 +1,47 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 820 160" font-family="-apple-system, Segoe UI, Helvetica, Arial, sans-serif" font-size="14">
+  <defs>
+    <marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#555"/>
+    </marker>
+    <style>
+      .box{fill:#f4f6f8;stroke:#8a96a3;stroke-width:1.2}
+      .z{fill:#fff4e5;stroke:#e08a1e;stroke-width:1.5}
+      .rom{fill:#eaf2ff;stroke:#4a78c2;stroke-width:1.2}
+      .t{fill:#1f2328;text-anchor:middle}
+      .b{font-weight:600}
+      .s{fill:#57606a;font-size:12.5}
+      .l{stroke:#555;stroke-width:1.5;fill:none;marker-end:url(#a)}
+    </style>
+  </defs>
+  <rect width="820" height="160" rx="10" fill="#ffffff"/>
+
+  <rect class="rom" x="20" y="40" width="135" height="80" rx="8"/>
+  <text class="t b" x="87" y="68">BASIC,</text>
+  <text class="t b" x="87" y="86">the ROM</text>
+  <text class="t s" x="87" y="106">PRINT, LIST ...</text>
+
+  <rect class="rom" x="190" y="40" width="145" height="80" rx="8"/>
+  <text class="t b" x="262" y="68">Display file</text>
+  <text class="t s" x="262" y="88">the screen's text,</text>
+  <text class="t s" x="262" y="105">in the ZX81's RAM</text>
+
+  <rect class="z" x="370" y="40" width="160" height="80" rx="8"/>
+  <text class="t b" x="450" y="66">zx64 copies it</text>
+  <text class="t s" x="450" y="86">25 times a second,</text>
+  <text class="t s" x="450" y="103">when the VIC signals</text>
+
+  <rect class="box" x="565" y="40" width="110" height="80" rx="8"/>
+  <text class="t b" x="620" y="68">VIC screen</text>
+  <text class="t s" x="620" y="88">memory</text>
+
+  <rect class="box" x="710" y="40" width="95" height="80" rx="8"/>
+  <text class="t b" x="757" y="68">VIC</text>
+  <text class="t s" x="757" y="88">draws it in</text>
+  <text class="t s" x="757" y="105">the ZX81 font</text>
+
+  <path class="l" d="M155,80 H188"/>
+  <path class="l" d="M335,80 H368"/>
+  <path class="l" d="M530,80 H563"/>
+  <path class="l" d="M675,80 H708"/>
+
+</svg>
