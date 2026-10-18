@@ -31,6 +31,7 @@ CMD_ROM  = 9            ; F7 or F3: the ZX81 ROM again, from the boot file
 ST_OK    = 0
 ST_ERR   = 1            ; not found, or the drive reported an error
 ST_BIG   = 2            ; the program would run into the Z80's stack
+ST_NOTP  = 3            ; the file isn't a ZX81 program
 
 SETNAM  = $ffbd
 SETLFS  = $ffba
@@ -195,7 +196,9 @@ hloop:  sta hdr,x
         sta st
         pla
         jmp hloop
-hdone:  lda hdr+11              ; E_LINE: does the program fit? Checked
+hdone:  jsr isprog              ; a ZX81 program at all? (a PRG of code
+        bcs rnotp               ; isn't)
+        lda hdr+11              ; E_LINE: does the program fit? Checked
         ldx hdr+12              ; before anything is written, so a refused
         jsr setend              ; load leaves the ZX81 as it was
         bcs rbig
@@ -233,6 +236,8 @@ rloop:  lda PTR                 ; at E_LINE: done, whatever follows
 rok:    lda #ST_OK
         beq rend
 rbig:   lda #ST_BIG
+        bne rend
+rnotp:  lda #ST_NOTP
         bne rend
 rerr:   lda #ST_ERR
 rend:   sta MB+1
@@ -681,6 +686,29 @@ dowrite:
         lda MB+$25
         sta eend+1
         jmp sloop               ; as SAVE: the bytes, then the drive's word
+
+; C=1 if hdr (the file's first 13 bytes, $4009-$4015) isn't the start of
+; a ZX81 program: VERSN 0, D_FILE from $407D (past the system variables),
+; VARS not before it, E_LINE after VARS. Every .P passes; code doesn't.
+isprog: lda hdr                 ; VERSN
+        bne ip_no
+        lda hdr+3               ; D_FILE >= $407D
+        cmp #$7d
+        lda hdr+4
+        sbc #$40
+        bcc ip_no
+        lda hdr+7               ; VARS >= D_FILE
+        cmp hdr+3
+        lda hdr+8
+        sbc hdr+4
+        bcc ip_no
+        lda hdr+7               ; VARS < E_LINE: C=0
+        cmp hdr+11
+        lda hdr+8
+        sbc hdr+12
+        rts
+ip_no:  sec
+        rts
 
 !if * > $0dfe { !error "6510 code overflows into $0DFE, where the Z80 puts a keyboard row (IN A,($FE), A = $FD)" }
 

@@ -1371,8 +1371,10 @@ def main():
     m.mtype("F 7000 701F 00\r")
     m.mtype('L "T1" 7100\r', settle=30)
     l1 = bytes(m.z.memory[0x7100:0x7110]) == t1[2:] and last(1) == ["LOADED 7100-710F"]
-    m.mtype("L T1\r", settle=30)
+    m.mtype("L T1 7000\r", settle=30)            # no quotes; no address would be a program
     l2 = bytes(m.z.memory[0x7000:0x7010]) == t1[2:] and last(1) == ["LOADED 7000-700F"]
+    m.mtype("L T1\r", settle=30)
+    l2 = l2 and last(1) == ["? NOT A PROGRAM"]
     m.mtype('L "T1" F000\r', settle=30)          # C64 $0000: the 6510's page
     l3 = last(2) == ["?", "00, OK,00,00"]
     m.mtype('L "NOPE"\r', settle=30)
@@ -1386,7 +1388,8 @@ def main():
     a1 = last(1)
     m.mtype("@S:T1\r", settle=30)
     a2 = last(1)
-    check("the disk: W writes a PRG (load address the C64's), L loads it to its own address or another, "
+    check("the disk: W writes a PRG (load address the C64's), L loads it to an address (without one: "
+          "not a program), "
           "not into the 6510's page, a missing file says so; $ lists; @ the status, @S: scratches",
           w_ok and l1 and l2 and l3 and l4 and d_ok and a1 == ["00, OK,00,00"]
           and a2 == ["01, FILES SCRATCHED,01,00"] and b"T1" not in m.drive.files,
@@ -1614,6 +1617,86 @@ def main():
     r = enter(m, "R")
     check("and with the ROM's string printer: LD DE / LD BC / JP $0B6B", m.screen()[0] == "HELLO WORLD"
           and r == "0/10", f"{m.screen()[0]!r} {r}")
+    m.tap("F5")
+    m.mtype('W "HELLO"\r', settle=200)               # the program, for the L tests below
+    hello = m.drive.files.get(b"HELLO", b"")
+
+    # L and W without addresses: a program, as BASIC's LOAD and SAVE; with
+    # them, memory as a PRG. A file that isn't a program is refused
+    speed = open(os.path.join(ROOT, "build", "speed.p"), "rb").read()
+    big = bytearray(speed)
+    big[11:13] = (0x8100).to_bytes(2, "little")  # E_LINE past RAMTOP
+    m = Machine(int_wired=True)
+    m.boot()
+    m.drive.files.update({b"ZX64MON": mon, b"ZX64MON2": mon2, b"SPEED": speed, b"BIG": bytes(big)})
+    m.tap("F5")
+    m.mtype("F 7000 701F 50\r")             # E_LINE $5050: it fits
+    m.mtype('W "MYTEST" 7000 701F\r', settle=60)
+    sysv = bytes(m.z.memory[0x4009:0x4100])
+    outs = []
+    for line in ('L "MYTEST"', 'L "BIG"', 'L "NONE"'):
+        m.mtype(line + "\r", settle=200)
+        scr = m.mscreen()
+        outs.append(scr[max(i for i, r in enumerate(scr) if r.lstrip(".") == line) + 1])
+    kept = bytes(m.z.memory[0x4009:0x4100]) == sysv
+    m.mtype('L "MYTEST" 7100\r', settle=200)
+    raw = bytes(m.z.memory[0x7100:0x7120]) == b"\x50" * 32
+    m.mtype('L "SPEED"\r', settle=200)
+    scr = m.mscreen()
+    loaded = next((r for r in reversed(scr) if r.startswith("LOADED")), "")
+    same = bytes(m.z.memory[0x4009:0x4009 + len(speed)]) == speed
+    m.mtype("X\r", settle=20)
+    m.until(m.ready, 300, "the ROM ready for a key")
+    m.run(3)
+    r = report(m)
+    check("L \"NAME\": a program, as LOAD (SPEED: $4009 on as the file; X: it runs, as it does after LOAD); "
+          "a PRG of code: "
+          "? NOT A PROGRAM, too big: ? TOO BIG, none: ?, nothing changed; L \"NAME\" a: still raw",
+          outs[0] == "? NOT A PROGRAM" and outs[1] == "? TOO BIG" and outs[2] == "?" and kept and raw
+          and loaded == "LOADED 4009-4593" and same and r is not None and r.startswith("0/")
+          and m.screen()[0] == "ZX64 SPEED TEST", f"{outs} {kept} {raw} {loaded!r} {same} {r} {m.screen()[0]!r}")
+    m.tap("F5")
+    m.mtype('W "SAVED"\r', settle=200)
+    eline = m.peek16(0x4014)
+    check("W \"NAME\": the program, as SAVE ($4009 up to E_LINE)",
+          m.drive.files.get(b"SAVED") == bytes(m.z.memory[0x4009:eline]),
+          f"{len(m.drive.files.get(b'SAVED', b''))} bytes, E_LINE {eline:04X}")
+    m.mtype("X\r", settle=20)
+    r = enter(m, 'J SHIFT+P M Y T E S T SHIFT+P')
+    check("LOAD \"MYTEST\" in BASIC (a PRG of code): report D, the program as it was",
+          r is not None and r.startswith("D/") and m.peek16(0x4014) == eline, f"{r}")
+
+    def dabble(paused):                          # L "HELLO" at the K cursor, or in a PAUSE
+        m = Machine(int_wired=True)
+        m.boot()
+        m.drive.files.update({b"ZX64MON": mon, b"ZX64MON2": mon2, b"HELLO": hello})
+        if paused:
+            m.type("1 0 M 1 0 0 0 NEWLINE")       # 10 PAUSE 1000
+            m.type("R")
+            m.keys = {C64KEY[ZXKEY["NEWLINE"]]}
+            m.run(3)
+            m.keys = set()
+            m.run(20)
+        m.tap("F5")
+        m.mtype('L "HELLO"\r', settle=200)
+        m.mtype("D 4082 4082\r")
+        d = next((r for r in reversed(m.mscreen()) if r.startswith(".,4082")), "")
+        m.mtype("X\r", settle=20)
+        m.until(m.ready, 300, "the ROM ready for a key")
+        m.run(3)
+        r1 = report(m)
+        r2 = enter(m, "R")
+        return d, r1, r2, m.screen()[0]
+    got = [dabble(False), dabble(True)]
+    m = Machine(int_wired=True)                  # the same file with BASIC's LOAD
+    m.boot()
+    m.drive.files[b"HELLO"] = hello
+    r = enter(m, "J SHIFT+P H E L L O SHIFT+P")
+    basic = (r, m.screen())
+    check("W \"HELLO\", then L \"HELLO\" (at the K cursor, or with F5 in a PAUSE): D shows its code, X: "
+          "BASIC as after LOAD \"HELLO\" (report, screen), RUN prints HELLO WORLD",
+          len(hello) > 100 and all(g[0].endswith("LD DE,$408B") and g[1] == basic[0] and g[2] == "0/10"
+                                   and g[3] == "HELLO WORLD" for g in got), f"{len(hello)} {got} {basic[0]}")
 
     # ---- tools/pcheck.py, on a program made for it: each IN and OUT, and
     # what zx64 makes of it

@@ -301,8 +301,8 @@ Numbers are hex; `=` converts. RUN/STOP stops a long listing.
     C s e d          compare
     H s e b b ...    hunt bytes; H s e 'TEXT hunts ZX81 characters
     $                the disk's directory
-    L "NAME" [a]     load a file to its own address, or to a
-    W "NAME" s e     write s-e as a PRG with its C64 address
+    L "NAME" [a]     load a program, as LOAD; with a: a file to a
+    W "NAME" [s e]   save the program, as SAVE; with s e: s-e as a PRG
     @[cmd]           the drive's status, or a DOS command
     = n              n in hex, decimal and binary; +n is decimal, %n binary
     ?                help
@@ -464,13 +464,27 @@ and `INC A` / `JR Z` finds it. `H 7000 7FFF 'LAZY` finds the text again.
 
 ### Disk commands
 
-`$` lists the directory. `L "NAME"` loads a PRG to the address in its
-first two bytes (a C64 address), or to the address given. `W "NAME" s e`
-writes memory as a PRG with the C64's load address, so `LOAD
-"NAME",8,1` on a plain C64 puts it back where it was.
+`$` lists the directory. Without addresses, `L` and `W` are BASIC's
+`LOAD` and `SAVE`: the program, from `$4009` up to `E_LINE`, with the
+code in its `REM` lines. So a program can be loaded to work on in the
+monitor:
+
+    L "HELLO"                LOADED 4009-xxxx; D 4082 shows its code
+    W "HELLO"                saved again, changes and all
+
+After `L`, leaving the monitor (`X`, `G` or F5) goes on as `LOAD` does:
+what was running is gone, a program saved from a program line runs, and
+any other stops at the K cursor with report 0. `L` refuses a file that
+isn't a program (`? NOT A PROGRAM`, as `LOAD` gives report D) or that
+doesn't fit (`? TOO BIG`, report 4), before anything is written.
+
+With addresses they are for memory. `W "NAME" s e` writes s-e as a PRG
+with the C64's load address, so `LOAD "NAME",8,1` on a plain C64 puts it
+back where it was; `L "NAME" a` loads a PRG to a:
 
     W "ROM" 0000 1FFF        the patched ROM, 33 blocks (C64 $1000)
-    L "ROM" 8000             loaded to $8000 instead
+    L "ROM" 0000             back where it was
+    L "ROM" 8000             or to $8000
 
 `@` alone reads the drive's status; `@` with text sends a DOS command:
 

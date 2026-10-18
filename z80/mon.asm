@@ -13,8 +13,8 @@
 ;   S              one step: the instruction at PC, then back here
 ;   A a text       assemble at a; ".A next" waits for the next (see cmd_a)
 ;   $              the directory
-;   L "NAME" [a]   load a file (to a)
-;   W "NAME" s e   write memory to a file
+;   L "NAME" [a]   load a program, as LOAD; a file to a
+;   W "NAME" [s e] save the program, as SAVE; memory to a file
 ;   @[text]        the drive's status; a DOS command
 ;   : a b 'TEXT'   store bytes and ZX81 text (M's lines, hex or characters
 ;                  changed and RETURN pressed)
@@ -94,6 +94,7 @@ entry:  pop hl
         call BP_OFF             ; the breakpoints' bytes back
         xor a
         ld (mmode),a
+        ld (loaded),a
         ld a,(MONWHY)
         or a
         jr nz,en_bp
@@ -129,7 +130,16 @@ main:   call getline
 leave:  call kup
         call scr_off
 leave_q:
-        call arm                ; the breakpoints, as RST $38s
+        ld a,(loaded)           ; a program loaded (L "NAME"): not back to
+        or a                    ; what ran, but to BASIC, as a report
+        jr z,lq1
+        ld hl,pgo
+        ld (r_pc),hl
+        xor a
+        ld (stepping),a
+        ld (gostep),a
+        ld (sbn),a
+lq1:    call arm                ; the breakpoints, as RST $38s
         ld sp,(r_sp)
         ld hl,(r_pc)
         push hl
@@ -158,6 +168,28 @@ leave_q:
         ld ix,(r_ix)
         ld iy,(r_iy)
         jp MON_RET
+
+; After L "NAME", leaving comes here, to go on as the ROM's LOAD does:
+; from the loaded NXTLIN (a program saved by a program line runs), else
+; report 0. The ROM's error exit, ERROR-3 ($0058), with L = $FF (no
+; error): ERR_NR, SP from ERR_SP, SLOW/FAST, and back to what is at
+; ERR_SP. That is $0676 while a program runs (the next line, or the
+; report), but the editor's key wait ($04CF) in the editor, where it
+; would spin (zx64's call is before it): so $0676 is put there first.
+; Not RST 8: it sets X_PTR, and a program going on with X_PTR set stops
+; with report C. FLAGS bit 7: run, not only check the syntax (the editor
+; clears it; LOAD runs as a command, with it set). PPC $FFFE: a command,
+; not a program's line (PPC isn't in the file). What ran is left behind,
+; as after BREAK.
+pgo:    set 7,(iy+$01)          ; FLAGS
+        ld hl,$FFFE
+        ld ($4007),hl           ; PPC
+        ld hl,($4002)           ; ERR_SP
+        ld (hl),$76
+        inc hl
+        ld (hl),$06
+        ld l,$FF
+        jp $0058
 
 ; ---------------------------------------------------------------- screen
 ; The ZX81's VIC settings are put back as c64/boot.asm makes them, not
@@ -1286,8 +1318,8 @@ help:   db "M S [E]     MEMORY, 8 BYTES A LINE",0
         db "S           ONE STEP (RETURN: ANOTHER)",0
         db "A A TEXT    ASSEMBLE ($ OR 0 BEFORE HEX)",0
         db "$           THE DIRECTORY",0
-        db "L ",$22,"NAME",$22," [A] LOAD (AT A)",0
-        db "W ",$22,"NAME",$22," S E WRITE S-E TO THE DISK",0
+        db "L ",$22,"NAME",$22," [A] LOAD; A FILE TO A",0
+        db "W ",$22,"NAME",$22," [S E] SAVE; S-E TO A FILE",0
         db "@[TEXT]     THE DRIVE'S STATUS, A COMMAND",0
         db ": A B 'TXT' STORE BYTES, ZX81 TEXT",0
         db "R           REGISTERS (; AND ' TO EDIT)",0
@@ -1387,6 +1419,8 @@ zx2asc:                         ; ZX81 codes 0-63 as ASCII ($7F: graphics)
         include "version.inc"   ; verstr: zx64's version (build.py)
 
 inited:  db 0                   ; the screen has been cleared once
+loaded:  db 0                   ; L "NAME" brought a program: leave to BASIC
+msp:     dw 0                   ; the monitor's SP while L uses the ZX81's
 crow:    db 0                   ; the cursor
 ccol:    db 0
 curst:   db 0                   ; the cursor's character is reversed
@@ -2888,12 +2922,15 @@ hs1:    ld a,(hl)
         jr hs1
 
 ; ---------------------------------------------------------------- the disk
-; $ the directory; L "NAME" [a] a file to its own address or to a; W
-; "NAME" s e memory to a file (a PRG: its load address is the C64's, so
-; LOAD "NAME",8,1 on a C64 puts it back); @ the drive's status, @text a
-; DOS command (@S:NAME scratches). The 6510 does it (c64/boot.asm,
-; commands 3-8), as for LOAD and SAVE; it won't load into its own page
-; or the I/O chips, nor W save from the I/O chips.
+; $ the directory; L "NAME" a program, as LOAD; L "NAME" a a file to a;
+; W "NAME" the program, as SAVE; W "NAME" s e memory to a file (a PRG:
+; its load address is the C64's, so LOAD "NAME",8,1 on a C64 puts it
+; back); @ the drive's status, @text a DOS command (@S:NAME scratches).
+; The 6510 does it (c64/boot.asm, commands 1-8), as for LOAD and SAVE; it
+; won't load into its own page or the I/O chips, nor W save from the I/O
+; chips.
+CMD_LOAD:  equ 1
+CMD_SAVE:  equ 2
 CMD_PRG:   equ 3
 CMD_DIR:   equ 4
 CMD_DIRL:  equ 5
@@ -2932,13 +2969,12 @@ cmd_l:  ld hl,(lptr)
         call getname
         jp c,err
         call getw
-        ld a,0
-        jr c,cl1
+        jr c,l_prog
         ld hl,$1000             ; to a: as the C64 has it
         add hl,de
         ld (MBOX+$22),hl
         ld a,1
-cl1:    ld (MBOX+$26),a
+        ld (MBOX+$26),a
         ld a,CMD_PRG
         call dcall
         push af
@@ -2961,11 +2997,46 @@ cl1:    ld (MBOX+$26),a
         call phex4
         jp down
 
+; L "NAME": the 6510's LOAD, from the ZX81's own stack (r_sp), so the
+; program has to fit below it as for LOAD. Leaving then goes to BASIC,
+; as a report (leave_q): what was running is gone.
+l_prog: ld (msp),sp
+        ld sp,(r_sp)
+        ld a,CMD_LOAD
+        call dcall
+        ld sp,(msp)
+        jr z,lp_ok
+        cp 2
+        jr z,lp_big
+        cp 3
+        jp nz,derr
+        call lstart
+        call putsi
+        db "? NOT A PROGRAM",0
+        jp down
+lp_big: call lstart
+        call putsi
+        db "? TOO BIG",0
+        jp down
+lp_ok:  ld a,1
+        ld (loaded),a
+        call lstart
+        call putsi
+        db "LOADED 4009-",0
+        ld hl,($4014)           ; E_LINE
+        dec hl
+        call phex4
+        jp down
+
 cmd_w:  ld hl,(lptr)
         call getname
         jp c,err
-        call needw
-        ld (a1),de
+        call getw
+        jr nc,cw0
+        ld a,CMD_SAVE           ; W "NAME": the program, as SAVE
+        call dcall
+        jr dstat0
+cw0:    ld (a1),de
         call needw
         ld (a2),de
         ld hl,(a2)

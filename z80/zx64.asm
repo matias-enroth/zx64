@@ -63,7 +63,8 @@ CMD_PRG: equ 3                  ; a PRG file to its own load address
 CMD_ROM: equ 9                  ; the ROM again, from the boot file
 MON:     equ $3000              ; zx64mon: JP its entry, then "ZM" (C64 $4000)
 MON2:    equ $E000              ; zx64mon2, its second part: "M2" (C64 $F000)
-ST_TOOBIG: equ 2                ; mailbox status: 0 ok, 1 not found or disk error, 2 too big
+ST_TOOBIG: equ 2                ; mailbox status: 0 ok, 1 not found or disk error, 2 too big,
+                                ; 3 not a ZX81 program (LOAD: report D, as 1)
 
 DSIZE:   equ 24*33+1            ; VARS - D_FILE of a fully expanded display
 
