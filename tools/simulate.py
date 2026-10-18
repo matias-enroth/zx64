@@ -1171,6 +1171,26 @@ def main():
     check("an M line changed on the screen and RETURN: stored", m.z.memory[0x7008:0x700A] == b"\x55\xAA",
           bytes(m.z.memory[0x7008:0x7010]).hex(" "))
     m.mkey("CRSRDOWN")
+    def mline(text):                             # an M line typed (as if edited),
+        m.mtype(text + "\r")                    # and the row after it
+        scr = m.mscreen()
+        after.append(scr[max(i for i, r in enumerate(scr) if r.lstrip(".") == text) + 1])
+        return bytes(m.z.memory[0x7300:0x7308])
+    after = []
+    m.mtype(":7300 35 37 2E 33 39 00 A6 F5\r")   # PRINT, space, inverse A, a token
+    m.mtype("M 7300 7300\r")
+    shown = [r for r in m.mscreen() if r.startswith(".:7300")][-1]
+    got = [mline(":7300 35 37 2E 33 39 00 A6 F5 PRONT A."),   # O for I
+           mline(":7300 35 37 34 33 39 00 A6 F5 PRONT B."),   # B for an inverse A
+           mline(":7300 26 37 34 33 39 00 A7 F5 PRONT B."),   # hex changed, text not
+           mline(":7300 26 37 34 33 39 00 A7 F5 ARONT B!"),   # no ZX81 "!": ?
+           mline(":7300 01 02 03 04 05 06 07 08")]            # typed, no text
+    want = [bytes.fromhex(h) for h in ("35372E333900A6F5", "353734333900A6F5", "353734333900A7F5",
+                                       "263734333900A7F5", "263734333900A7F5", "0102030405060708")]
+    check("an M line's characters changed and RETURN: stored as ZX81 codes (inverse kept), hex still "
+          "wins where the text is as it was; ! (no ZX81 code): ?, nothing stored",
+          shown == ".:7300 35 37 2E 33 39 00 A6 F5 PRINT A." and got == want[1:]
+          and after[3] == "?", f"{shown!r} {[g.hex() for g in got]} {after}")
     m.mtype("T 7000 700F 7100\r")
     m.mtype(":7105 99\r")
     m.mtype("C 7000 700F 7100\r")

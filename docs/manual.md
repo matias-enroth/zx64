@@ -283,13 +283,15 @@ learn.
 
 The screen works as a C64's: move the cursor anywhere, change what is
 there, press RETURN to enter that line. A memory line from `M` or a
-disassembly line from `D` can be edited in place and entered again.
+disassembly line from `D` can be edited in place and entered again; on
+an `M` line, the hex or the characters (`PRINT` to `PRONT`). A changed
+character keeps the byte's inverse; one the ZX81 hasn't got (`!`) is `?`.
 Numbers are hex; `=` converts. RUN/STOP stops a long listing.
 
     M s [e]          memory, 8 bytes a line, with their ZX81 characters
     D s [e]          disassemble; M or D alone goes on
     A a text         assemble at a
-    : a b b ...      store bytes (what M's lines are)
+    : a b b ...      store bytes (what M's lines are, characters too)
     R                the registers, as ; and ' lines to edit
     G [a]            carry on (at a); X does the same
     B [a]            breakpoint on or off (four at most); B alone lists

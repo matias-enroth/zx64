@@ -16,7 +16,8 @@
 ;   L "NAME" [a]   load a file (to a)
 ;   W "NAME" s e   write memory to a file
 ;   @[text]        the drive's status; a DOS command
-;   : a b b ...    store bytes (M's lines, changed and RETURN pressed)
+;   : a b b ...    store bytes (M's lines, hex or characters changed and
+;                  RETURN pressed)
 ;   R              the registers, as a ";" and a "'" line to change
 ;   ; pc af bc de hl sp ix iy
 ;   ' af' bc' de' hl' i iff
@@ -349,30 +350,31 @@ hx1:    jp pch
 
 ; A = a ZX81 character code, shown as itself: inverse ones in reverse,
 ; graphics and codes that are no character as "."
-pzx:    push hl
-        push de
+pzx:    push de
         ld d,a
-        and $40
-        ld a,'.'
-        jr nz,pz_asc
-        ld a,d
-        and $3F
-        ld hl,zx2asc
-        add a,l
-        ld l,a
-        jr nc,pz1
-        inc h
-pz1:    ld a,(hl)
-        cp $7F
-        jr nz,pz_asc
-        ld a,'.'
-pz_asc: call a2s
+        call zxch
+        call a2s
         bit 7,d
         jr z,pz_put
         or $80
 pz_put: call pscr
         pop de
-        pop hl
+        ret
+
+zxch:   push hl                 ; A: a ZX81 code -> the ASCII pzx shows it
+        bit 6,a                 ; as, not inverse
+        jr nz,zc_dot
+        and $3F
+        ld hl,zx2asc
+        add a,l
+        ld l,a
+        jr nc,zc1
+        inc h
+zc1:    ld a,(hl)
+        cp $7F
+        jr nz,zc_ret
+zc_dot: ld a,'.'
+zc_ret: pop hl
         ret
 
 ; HL: an I/O register, read three times: each bit as two of them have it.
@@ -872,20 +874,73 @@ cm_next:
         ret c                   ; past $FFFF
         jr cm_line
 
-; : a b b ...: up to 8 bytes from a (the rest of an M line is left alone).
+; : a b b ...: up to 8 bytes from a. After 8, an M line's characters (a
+; space, then 8): one that is not as the byte at a showed it is stored as
+; its ZX81 code, inverse if the byte is; as it was, the hex goes. A
+; character with no ZX81 code: "?". All spaces: no text (typed by hand).
+; Read into pat first, so "?" stores nothing.
 cmd_colon:
         ld hl,(lptr)
         call needw
         ld (a1),de
-        ld b,8
-co1:    call getb
-        jr c,co_end
-        ld de,(a1)
+        ld de,pat
+        ld c,0                  ; bytes read
+co1:    push de
+        call getb
+        pop de
+        jr c,co_put
         ld (de),a
         inc de
-        ld (a1),de
-        djnz co1
+        inc c
+        bit 3,c
+        jr z,co1
+        call co_text
+        ld c,8
+co_put: ld a,c
+        or a
+        jr z,co_end
+        ld b,0
+        ld hl,pat
+        ld de,(a1)
+        ldir
 co_end: jp quietly
+
+co_text:
+        ld a,(hl)               ; HL: after the 8th byte
+        cp ' '
+        ret nz
+        inc hl
+        push hl
+        ld b,8
+ct_sp:  ld a,(hl)
+        cp ' '
+        jr nz,ct_go
+        inc hl
+        djnz ct_sp
+        pop hl                  ; all spaces
+        ret
+ct_go:  pop hl
+        ld de,(a1)
+        ld ix,pat
+        ld b,8
+ct1:    ld a,(de)               ; as the byte showed: the hex goes
+        call zxch
+        cp (hl)
+        jr z,ct_same
+        ld a,(hl)
+        call a2zx
+        jp c,err
+        ld c,a
+        ld a,(ix+0)
+        and $80
+        or c
+        ld (ix+0),a
+ct_same:
+        inc hl
+        inc de
+        inc ix
+        djnz ct1
+        ret
 
 ; R: the registers, as lines that ";" and "'" take back.
 cmd_r:  call r_main
