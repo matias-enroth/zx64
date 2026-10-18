@@ -1103,7 +1103,8 @@ ml_c:   ld a,(hl)
 ; After 8 bytes and no text, an M line's characters (a space, then 8):
 ; one that is not as the byte at a showed it is stored as its ZX81 code,
 ; inverse if the byte is; as it was, the hex goes. All spaces: no text
-; (typed by hand). A character with no ZX81 code: "?". Read into pat
+; (typed by hand). An M line is drawn again from memory after it. A
+; character with no ZX81 code: "?". Read into pat
 ; first, so "?" stores nothing; a line holds fewer bytes than pat.
 cmd_colon:
         ld hl,(lptr)
@@ -1132,6 +1133,18 @@ co1:    call skipsp
         jr z,co1
         call co_text
         ld c,8
+        call co_st
+        ld a,(crow)             ; an M line: drawn again from memory, on its
+        push af                 ; row above the cursor, so what was stored
+        dec a                   ; shows (a changed character's inverse too)
+        ld (crow),a
+        ld hl,(a1)
+        call mline
+        pop af
+        ld (crow),a
+        xor a
+        ld (ccol),a
+        jp quietly
 co_put: call co_st
         jp quietly
 

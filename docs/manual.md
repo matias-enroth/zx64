@@ -286,6 +286,8 @@ there, press RETURN to enter that line. A memory line from `M` or a
 disassembly line from `D` can be edited in place and entered again; on
 an `M` line, the hex or the characters (`PRINT` to `PRONT`). A changed
 character keeps the byte's inverse; one the ZX81 hasn't got (`!`) is `?`.
+After RETURN the line is drawn again from memory, so it shows what was
+stored.
 Numbers are hex; `=` converts. RUN/STOP stops a long listing.
 
 CRSR UP on the top row and CRSR DOWN on the bottom one scroll an `M` or

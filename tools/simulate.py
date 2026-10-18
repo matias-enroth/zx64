@@ -1171,12 +1171,14 @@ def main():
     check("an M line changed on the screen and RETURN: stored", m.z.memory[0x7008:0x700A] == b"\x55\xAA",
           bytes(m.z.memory[0x7008:0x7010]).hex(" "))
     m.mkey("CRSRDOWN")
-    def mline(text):                             # an M line typed (as if edited),
-        m.mtype(text + "\r")                    # and the row after it
+    def mline(text):                             # an M line typed (as if edited): its
+        m.mtype(text + "\r")                    # row then (redrawn), the row after it
         scr = m.mscreen()
-        after.append(scr[max(i for i, r in enumerate(scr) if r.lstrip(".") == text) + 1])
+        i = max(i for i, r in enumerate(scr) if r.lstrip(".").startswith(":7300"))
+        redrawn.append((scr[i], m.z.memory[MSCR + 40 * i + 37]))
+        after.append(scr[i + 1])
         return bytes(m.z.memory[0x7300:0x7308])
-    after = []
+    after, redrawn = [], []
     m.mtype(":7300 35 37 2E 33 39 00 A6 F5\r")   # PRINT, space, inverse A, a token
     m.mtype("M 7300 7300\r")
     shown = [r for r in m.mscreen() if r.startswith(".:7300")][-1]
@@ -1191,6 +1193,11 @@ def main():
           "wins where the text is as it was; ! (no ZX81 code): ?, nothing stored",
           shown == ".:7300 35 37 2E 33 39 00 A6 F5 PRINT A." and got == want[1:]
           and after[3] == "?", f"{shown!r} {[g.hex() for g in got]} {after}")
+    check("RETURN on an M line: the line drawn again from memory (hex as stored, the changed B "
+          "inverse, as the A it replaced was)",
+          redrawn[0][0] == ".:7300 35 37 34 33 39 00 A6 F5 PRONT A."
+          and redrawn[1] == (".:7300 35 37 34 33 39 00 A7 F5 PRONT B.", 0x82)
+          and redrawn[4][0] == ".:7300 01 02 03 04 05 06 07 08 ........", f"{redrawn}")
     def zxs(text):
         return bytes(ZX.index(c) for c in text)
     def colon(text):                             # a : line, its bytes from a, the row after
