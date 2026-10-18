@@ -1182,6 +1182,21 @@ def main():
           bytes(m.z.memory[0x7100:0x7110]) == bytes(m.z.memory[0x7000:0x7005]) + b"\x99"
           + bytes(m.z.memory[0x7006:0x7010])
           and "7005" in scr and "7105" in scr and "7200" in scr, f"{scr[-8:]}")
+    def conv(text):                              # = n: the line it shows
+        m.mtype(text + "\r")
+        scr = m.mscreen()
+        i = max(i for i, r in enumerate(scr) if r == "." + text)
+        return scr[i + 1]
+    cases = [("= C000", "= $C000 +49152 %11000000 00000000"), ("= +255", "= $00FF +255 %11111111"),
+             ("= %1010", "= $000A +10 %00001010"), ("=$1F", "= $001F +31 %00011111"),
+             ("= 0", "= $0000 +0 %00000000"), ("= +65535", "= $FFFF +65535 %11111111 11111111"),
+             ("= %100000000", "= $0100 +256 %00000001 00000000"),
+             ("= $C000 +49152 %11000000 00000000", "= $C000 +49152 %11000000 00000000"),
+             ("= +65536", "?"), ("= 10000", "?"), ("= +12A", "?"), ("= %102", "?"), ("=", "?"),
+             ("= +", "?")]
+    bad = [(t, got) for t, want in cases if (got := conv(t)) != want]
+    check("= n: hex, +decimal or %binary in, all three out; RETURN on that line again; "
+          "too big or not a number: ?", not bad, f"{bad}")
     pc, af = m.peek16(mlb["r_pc"]), m.peek16(mlb["r_af"])
     m.mtype(";2222 3333\r")
     check("; changes the registers in order (PC, AF ...)",

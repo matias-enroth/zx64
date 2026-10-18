@@ -8,7 +8,7 @@ wire, SD2IEC. Emulator: VICE (`x64sc -cpmcart`, 3.7.1 and 3.10).
 `tools/simulate.py` runs the patched ROM and zx64 on a Z80 emulator and
 the 6510 loader on a 6502 emulator, switching as the cartridge does,
 with a fake VIC, CIA, colour RAM, kernal and drive. It types and reads
-the screen. 92 checks, with and without `/INT`, covering:
+the screen. 94 checks, with and without `/INT`, covering:
 
 - boot, typing, type-ahead and F1 (TEST typed fast: no ghost F), the
   cursor keys, F2/F3/F5/F7; no cartridge: a message and back to BASIC
@@ -24,7 +24,8 @@ the screen. 92 checks, with and without `/INT`, covering:
   the picture copy (a PAL frame is 39,312)
 - the test programs (`SPEED`, `PAUSE`, `MEM`, `FAST`: the picture
   held, `FRAMES` still, SPACE and RUN/STOP breaking a FAST loop)
-- the monitor: every command; D over 123 instructions and the whole ROM;
+- the monitor: every command (`=` in all three bases, and `?` past
+  $FFFF); D over 123 instructions and the whole ROM;
   A assembling everything D shows; S's next-PC for 16 kinds of branch;
   breakpoints with and without `/INT`; the disk commands
 - pcheck on a program made to trip each warning
@@ -74,6 +75,12 @@ Done (2026-10-13 to 2026-10-16):
 - [x] Typing `TEST` fast: no ghost F, in the editor and the monitor
 - [x] `rom/romdump.p` on a ZX81 with a ZXpand+: the dump (`ZX81ROM.P`)
       has the standard ROM's md5
+
+Not yet tried there (after 1.0):
+
+- [ ] The monitor's `=`: `= C000`, `= +255`, `= %1010`
+- [ ] A C64 reset with the monitor in RAM, BASIC text on the screen, then
+      zx64 and F5: " LOADING ZX64MON", then a clear monitor screen
 
 ## pcheck on real programs
 

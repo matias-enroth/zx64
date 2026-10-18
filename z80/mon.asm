@@ -23,6 +23,7 @@
 ;   G [a]          go on with the registers (at a); X the same
 ;   F s e b        fill          T s e d   transfer
 ;   C s e d        compare       H s e b b ... or H s e 'TEXT  hunt
+;   = n            n in hex, decimal and binary (+n decimal, %n binary)
 ;   ?              help
 ; The screen is edited as on a C64: the cursor keys, INST/DEL, CLR/HOME,
 ; and RETURN takes the line the cursor is on. RUN/STOP stops a long
@@ -793,6 +794,8 @@ cmds:   db 'M'
         dw cmd_comma
         db '?'
         dw cmd_help
+        db '='
+        dw cmd_eq
         db 0
 
 err:    ld sp,MSTACK            ; "?", and the prompt
@@ -1174,7 +1177,8 @@ help:   db "M S [E]     MEMORY, 8 BYTES A LINE",0
         db "T S E D     TRANSFER",0
         db "C S E D     COMPARE",0
         db "H S E B ... HUNT BYTES; H S E 'TEXT",0
-        db "F5          BACK TO THE ZX81",0
+        db "= N         HEX, +DEC, %BIN: ALL THREE",0
+        db "F5         BACK TO THE ZX81",0
         db 0
 
 ; ---------------------------------------------------------------- parsing
@@ -2997,6 +3001,77 @@ pp1:    and $7F
         jr c,ppet
         call pch
         jr ppet
+
+; ---------------------------------------------------------------- =
+; = n: n in hex ($ or nothing before it), decimal (+) or binary (%),
+; shown in all three: "= $C000 +49152 %11000000 00000000", 8 bits up to
+; 255. RETURN on that line shows it again (what follows a number is left
+; alone if a space comes first). Past $FFFF, or not a number: "?".
+cmd_eq: ld hl,(lptr)
+        call skipsp
+        ld c,10
+        cp '+'
+        jr z,eq_pfx
+        ld c,2
+        cp '%'
+        jr z,eq_pfx
+        ld c,16
+        cp '$'
+        jr nz,eq_num
+eq_pfx: inc hl
+eq_num: ld de,0
+        ld a,(hl)
+        call hexval
+        jp c,err                ; no digit at all
+eq_dig: cp c
+        jp nc,err               ; not one in this base
+        push hl
+        ld h,0
+        ld l,a
+        ld b,c
+eq_mul: add hl,de               ; the digit + DE * the base
+        jp c,err
+        djnz eq_mul
+        ex de,hl
+        pop hl
+        inc hl
+        ld a,(hl)
+        call hexval
+        jr nc,eq_dig
+        ld a,(hl)               ; the number ends with the line or a space
+        or a
+        jr z,eq_out
+        cp ' '
+        jp nz,err
+eq_out: ex de,hl
+        call lstart
+        call putsi
+        db "= $",0
+        call phex4
+        call putsi
+        db " +",0
+        push hl
+        call pdec
+        pop hl
+        call putsi
+        db " %",0
+        ld a,h
+        or a
+        jr z,eq_lo
+        call pbin
+        call sp1
+eq_lo:  ld a,l
+        call pbin
+        jp down
+
+pbin:   ld c,a                  ; A in binary, 8 digits
+        ld b,8
+pb1:    ld a,'0'
+        rl c
+        adc a,0
+        call pch
+        djnz pb1
+        ret
 
 monend:
 

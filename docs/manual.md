@@ -284,7 +284,7 @@ learn.
 The screen works as a C64's: move the cursor anywhere, change what is
 there, press RETURN to enter that line. A memory line from `M` or a
 disassembly line from `D` can be edited in place and entered again.
-Numbers are hex. RUN/STOP stops a long listing.
+Numbers are hex; `=` converts. RUN/STOP stops a long listing.
 
     M s [e]          memory, 8 bytes a line, with their ZX81 characters
     D s [e]          disassemble; M or D alone goes on
@@ -302,6 +302,7 @@ Numbers are hex. RUN/STOP stops a long listing.
     L "NAME" [a]     load a file to its own address, or to a
     W "NAME" s e     write s-e as a PRG with its C64 address
     @[cmd]           the drive's status, or a DOS command
+    = n              n in hex, decimal and binary; +n is decimal, %n binary
     ?                help
 
 The monitor is loaded from the disk on the first F5 (about 7K). It works
