@@ -1571,6 +1571,84 @@ def main():
           listed == "BREAKPOINTS 7003" and regs.startswith(";7003 02") and m.z.memory[0x7100] == 3
           and report(m) == "0/0", f"{listed!r} {regs[:10]!r} {report(m)}")
 
+    # scrolling at the screen's edges: CRSR DOWN on the bottom row goes on
+    # from the lowest M or D line, CRSR UP on the top row goes back
+    m = Machine(int_wired=True)
+    m.boot()
+    m.drive.files[b"ZX64MON"] = mon
+    m.drive.files[b"ZX64MON2"] = mon2
+    m.tap("F5")
+    up, dn = ("CRSRDOWN", "LSHIFT"), ("CRSRDOWN",)
+    def rows_of(kind):                           # the screen's M or D lines, by address
+        return {int(r[2:6], 16): r for r in m.mscreen() if r.startswith(kind)}
+    ref = {}                                     # D from $0229 (an instruction's start), 64 lines
+    m.mtype("D 0229\r", settle=30)
+    for _ in range(3):
+        ref.update(rows_of(".,"))
+        m.mtype("D\r", settle=30)
+    ref.update(rows_of(".,"))
+    addrs = sorted(ref)
+    m.mkey("HOME", "LSHIFT")                     # CLR: nothing to go on from
+    m.mkey(*up)
+    nothing = all(r == "" for r in m.mscreen()) and m.z.memory[mlb["crow"]] == 0
+    m.mtype(f"D {addrs[30]:04X} {addrs[52]:04X}\r", settle=60)    # 23 lines and the prompt
+    scr0 = m.mscreen()
+    m.mkey(*dn)                                  # the prompt's row becomes the next line
+    m.mkey(*dn)                                  # then it scrolls
+    m.mkey(*dn)
+    scr1 = m.mscreen()
+    for _ in range(24):
+        m.mkey(*up)                              # to the top row
+    for _ in range(6):
+        m.mkey(*up)                              # and back over the ROM's IY code
+    scr2 = m.mscreen()
+    m.mkey("HOME", "LSHIFT")                     # (not on the top row's D line)
+    m.mtype("D\r", settle=30)                    # D alone: on from the bottom
+    after = rows_of(".,")
+    want_dn = [ref[a] for a in addrs[51:56]]
+    want_up = [ref[a] for a in addrs[25:30]]
+    check("CRSR DOWN on the bottom row: the next D lines (the prompt's row first), CRSR UP on the top "
+          "row: the ones before, as a listing from $0229 has them (IY code); D alone goes on; "
+          "no M or D line on the screen: nothing", nothing and scr0[-1] == "." and scr1[-5:] == want_dn
+          and scr2[:5] == want_up and m.z.memory[mlb["crow"]] < 25 and addrs[56] in after,
+          f"{nothing} {scr0[-2:]} {scr1[-5:]} {want_dn} {scr2[:5]} {want_up}")
+    blk = bytes.fromhex("FD360512 DDCB0346 ED4B3412 CB11 FD210040 DD7EFE EDB0 00 CF0C FDCB0186"
+                        "DDE5 ED5F 3EDD 06FD 21CBED FDE1 C9")   # every prefix; RST $08's DB;
+    m.z.memory[0x7000:0x7000 + 2 * len(blk)] = blk * 2         # data bytes that are prefixes
+    m.mkey("HOME", "LSHIFT")                     # back 25 lines over it: the whole screen
+    m.mtype("D 7000\r", settle=30)               # as D lists it forward
+    ref = {}
+    for _ in range(3):
+        ref.update(rows_of(".,"))
+        m.mtype("D\r", settle=30)
+    ref.update(rows_of(".,"))
+    addrs = sorted(ref)
+    m.mkey("HOME", "LSHIFT")
+    m.mtype(f"D {addrs[28]:04X} {addrs[51]:04X}\r", settle=60)   # 24 lines: the command scrolls away
+    for _ in range(24 + 25):
+        m.mkey(*up)
+    got = m.mscreen()
+    want = [ref[a] for a in addrs[3:28]]
+    check("CRSR UP 25 times over code with every prefix (DD CB d op too), RST $08's DB and prefix "
+          "bytes as data: every line as D lists it forward", got == want,
+          f"{[(g, w) for g, w in zip(got, want) if g != w][:3]}")
+    m.mkey("HOME", "LSHIFT")
+    m.mtype("M 7000 70BF\r", settle=60)          # 24 lines: the first scrolls away
+    m.mkey(*dn)
+    m.mkey(*dn)
+    scr1 = m.mscreen()
+    for _ in range(24):
+        m.mkey(*up)
+    m.mkey(*up)
+    m.mkey(*up)
+    scr2 = m.mscreen()
+    m.mkey("HOME", "LSHIFT")
+    m.mtype("M\r", settle=30)
+    check("the same with M lines: 70C0 and 70C8 at the bottom, 7000 and 6FF8 back at the top; M alone "
+          "goes on from 70D0", scr1[-2].startswith(".:70C0 ") and scr1[-1].startswith(".:70C8 ")
+          and scr2[0].startswith(".:6FF8 ") and scr2[1].startswith(".:7000 ")
+          and any(r.startswith(".:70D0 ") for r in m.mscreen()), f"{scr1[-3:]} {scr2[:3]}")
+
     # the manual's hello world: a REM line, A, the text with :, RUN; then
     # a breakpoint on its RST $10; then the ROM's own string printer
     m = Machine(int_wired=True)

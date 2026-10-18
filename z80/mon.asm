@@ -27,7 +27,8 @@
 ;   = n            n in hex, decimal and binary (+n decimal, %n binary)
 ;   ?              help
 ; The screen is edited as on a C64: the cursor keys, INST/DEL, CLR/HOME,
-; and RETURN takes the line the cursor is on. RUN/STOP stops a long
+; and RETURN takes the line the cursor is on. CRSR UP/DOWN at the top and
+; bottom scroll an M or D listing (sc_up, sc_dn). RUN/STOP stops a long
 ; listing. F5 or X goes back to the ZX81.
 
         include "core.inc"      ; zx64's MON_RET, MONIFF, NOTBAD, CREAD, BP_OFF,
@@ -677,7 +678,10 @@ crleft: ld a,(ccol)
         dec a
         ld (ccol),a
         ret
-crdown: ld a,(ccol)
+crdown: ld a,(crow)
+        cp 24
+        jp nc,sc_dn
+cd_row: ld a,(ccol)
         push af
         call down
         pop af
@@ -685,7 +689,7 @@ crdown: ld a,(ccol)
         ret
 crup:   ld a,(crow)
         or a
-        ret z
+        jr z,sc_up
         dec a
         ld (crow),a
         ret
@@ -729,6 +733,179 @@ insch:  call rowp               ; a space at the cursor, the rest moved on
         lddr
 in_end: call cpos
         ld (hl),$20
+        ret
+
+; Scrolling, as Super Snapshot's monitor does. CRSR UP on the top row,
+; an M or D line: the screen moves down and the line before it comes in.
+; CRSR DOWN on the bottom row: the line after the lowest M or D line, in
+; the row under it if that is empty or only the prompt's ".", else at the
+; bottom, the screen moved up. M and D alone then go on after it. No M or
+; D line: as before.
+sc_up:  ld hl,MSCR
+        call rowmd
+        ret c
+        ld (sc_ty),a
+        ld a,(ccol)
+        push af
+        ld a,(dbnext)           ; D alone goes on from the bottom: as it was
+        push af
+        ld a,(sc_ty)
+        cp ':'
+        jr nz,su_d
+        ld hl,-8
+        add hl,de
+        jr su_put
+su_d:   call dback
+su_put: ld (a3),hl
+        ld hl,MSCR+959          ; rows 0-23 to 1-24 (scline clears row 0)
+        ld de,MSCR+999
+        ld bc,960
+        lddr
+        call scline
+        pop af
+        ld (dbnext),a
+        pop af
+        ld (ccol),a
+        ret
+
+sc_dn:  ld hl,MSCR+960          ; up from row 24, over empty rows and "."
+        ld b,24
+sd1:    call rowmt
+        jr nz,sd2
+        ld de,-40
+        add hl,de
+        dec b
+        jp m,cd_row
+        jr sd1
+sd2:    call rowmd
+        jp c,cd_row
+        ld (sc_ty),a
+        push bc
+        cp ':'
+        jr nz,sd_d
+        ld hl,8
+        jr sd_add
+sd_d:   call dcount             ; D: its bytes on the screen (a DB: 1)
+        ld c,0
+        ld a,b
+        dec a
+        jr nz,sd_db
+        ld a,(de)               ; RST $08 alone: the next is its report's DB
+        cp $CF
+        jr nz,sd_db
+        inc c
+sd_db:  ld a,c
+        ld (dbnext),a
+        ld l,b
+        ld h,0
+sd_add: add hl,de
+        ld (a3),hl
+        pop bc
+        ld a,(ccol)
+        push af
+        ld a,b
+        cp 24
+        jr nz,sd_in
+        call down               ; at the bottom: up a row
+        jr sd_put
+sd_in:  inc a                   ; the empty row under it
+        ld (crow),a
+sd_put: call scline
+        ld a,(sc_ty)
+        cp ':'
+        jr z,sd_m
+        ld (dnext),hl
+        jr sd_e
+sd_m:   ld (mnext),hl
+sd_e:   pop af
+        ld (ccol),a
+        ret
+
+scline: ld hl,(a3)              ; the line at a3 on the cursor's row, as
+        ld a,(sc_ty)            ; sc_ty: HL after it
+        cp ':'
+        jp z,mline
+        call ddec
+        jp dshow
+
+; HL: a row. Z if it is empty, or only "." in column 0.
+rowmt:  push hl
+        push bc
+        ld a,(hl)
+        cp '.'
+        jr nz,rt1
+        ld a,' '
+rt1:    cp ' '
+        jr nz,rt_x
+        ld b,39
+rt2:    inc hl
+        ld a,(hl)
+        cp ' '
+        jr nz,rt_x
+        djnz rt2
+rt_x:   pop bc
+        pop hl
+        ret
+
+; HL: a row. An M (".:") or D (".,") line: A ':' or ',', DE its address;
+; carry if not. Keeps BC, HL.
+rowmd:  push hl
+        push bc
+        ld a,(hl)
+        cp '.'
+        jr nz,rd_no
+        inc hl
+        ld a,(hl)
+        cp ':'
+        jr z,rd1
+        cp ','
+        jr nz,rd_no
+rd1:    ld c,a
+        ld de,0
+        ld b,4
+rd2:    inc hl
+        ld a,(hl)               ; screen code: A-F are 1-6
+        cp $20
+        jr nc,rm3
+        add a,$40
+rm3:    call hexval
+        jr c,rd_no
+        ex de,hl
+        add hl,hl
+        add hl,hl
+        add hl,hl
+        add hl,hl
+        or l
+        ld l,a
+        ex de,hl
+        djnz rd2
+        ld a,c
+        pop bc
+        pop hl
+        and a
+        ret
+rd_no:  pop bc
+        pop hl
+        scf
+        ret
+
+dcount: push hl                 ; HL: a D row -> B: its bytes (columns 7,
+        push de                 ; 10, 13, 16). Keeps DE, HL
+        ld de,7
+        add hl,de
+        ld b,0
+dc1:    ld a,(hl)
+        cp ' '
+        jr z,dc2
+        inc b
+        inc hl
+        inc hl
+        inc hl
+        ld a,b
+        cp 4
+        jr c,dc1
+dc2:    pop de
+        pop hl
         ret
 
 gl_ret: call rowp
@@ -864,24 +1041,8 @@ cm_12:  ld hl,(a1)
 cm_end: ld (a2),de
 cm_line:
         call stopchk
-        call lstart
-        call putsi
-        db ".:",0
         ld hl,(a1)
-        call phex4
-        ld b,8
-cm_b:   call sp1
-        ld a,(hl)
-        call phex2
-        inc hl
-        djnz cm_b
-        call sp1
-        ld hl,(a1)
-        ld b,8
-cm_c:   ld a,(hl)
-        call pzx
-        inc hl
-        djnz cm_c
+        call mline
         call down
         ld hl,(a1)              ; where M alone goes on
         ld de,8
@@ -906,6 +1067,28 @@ cm_next:
         ld (mnext),hl
         ret c                   ; past $FFFF
         jr cm_line
+
+; HL: 8 bytes shown as an M line on the cursor's row, as ":" takes
+; them back; HL after them.
+mline:  call lstart
+        call putsi
+        db ".:",0
+        call phex4
+        push hl
+        ld b,8
+ml_b:   call sp1
+        ld a,(hl)
+        call phex2
+        inc hl
+        djnz ml_b
+        call sp1
+        pop hl
+        ld b,8
+ml_c:   ld a,(hl)
+        call pzx
+        inc hl
+        djnz ml_c
+        ret
 
 ; : a b b ... 'TEXT' b ...: bytes from a, and text as ZX81 codes ("'" is
 ; no ZX81 character). A text running to the end of the line (no closing
@@ -1421,6 +1604,11 @@ zx2asc:                         ; ZX81 codes 0-63 as ASCII ($7F: graphics)
 inited:  db 0                   ; the screen has been cleared once
 loaded:  db 0                   ; L "NAME" brought a program: leave to BASIC
 msp:     dw 0                   ; the monitor's SP while L uses the ZX81's
+sc_ty:   db 0                   ; scrolling: ':' or ',', the line's kind
+bk_to:   dw 0                   ; dback: the line, a start tried, bytes
+bk_at:   dw 0                   ; left, dbnext there
+bk_n:    db 0
+bk_db:   db 0
 crow:    db 0                   ; the cursor
 ccol:    db 0
 curst:   db 0                   ; the cursor's character is reversed
@@ -1544,8 +1732,58 @@ cd_e:   ld hl,(a2)              ; e - the next: carry when past e
         ret c
         jr cd_line
 
-; HL: an instruction, shown as one line; HL: the next one.
-dis1:   ld (daddr),hl
+; DE: a D line's address -> HL: the instruction before it, and dbnext
+; for showing it. Z80 instructions are 1-4 bytes, so: decoded from 16
+; bytes back, then 15 ..., the first run that lands on DE exactly gives
+; it (code falls into step within a few instructions; data may fool it).
+; None does: DE-1.
+dback:  ld (bk_to),de
+        ld b,16
+db1:    push bc
+        ld hl,(bk_to)
+        ld a,l
+        sub b
+        ld l,a
+        jr nc,db2
+        dec h
+db2:    ld a,b                  ; bytes left to DE
+        ld (bk_n),a
+        xor a
+        ld (dbnext),a
+db3:    ld (bk_at),hl
+        ld a,(dbnext)
+        ld (bk_db),a
+        call ddec               ; HL: the next instruction
+        push hl
+        ld de,(bk_at)
+        and a
+        sbc hl,de               ; L: its length
+        ld a,(bk_n)
+        sub l
+        pop hl
+        jr c,db_no              ; past DE
+        ld (bk_n),a
+        jr nz,db3
+        pop bc                  ; on DE
+        ld hl,(bk_at)
+        ld a,(bk_db)
+        ld (dbnext),a
+        ret
+db_no:  pop bc
+        djnz db1
+        ld hl,(bk_to)
+        dec hl
+        xor a
+        ld (dbnext),a
+        ret
+
+; HL: an instruction, shown as one line; HL: the next one. ddec only
+; decodes it (daddr, dptr, dtext), dshow shows it on the cursor's row.
+dis1:   call ddec
+        call dshow
+        jp down                 ; (keeps HL)
+
+ddec:   ld (daddr),hl
         ld (dptr),hl
         ld hl,dtext
         ld (dout),hl
@@ -1567,22 +1805,24 @@ dis1:   ld (daddr),hl
         call tch
         call fetch
         call tn
-        jr d1_line
+        jr d1_ret
 d1_op:  call dec1
         ld hl,(daddr)
         ld a,(hl)
         cp $CF                  ; RST $08, one byte: a report follows
-        jr nz,d1_line
+        jr nz,d1_ret
         ld hl,(dptr)
         ld de,(daddr)
         and a
         sbc hl,de
         dec l
-        jr nz,d1_line
+        jr nz,d1_ret
         inc a
         ld (dbnext),a
-d1_line:
-        call lstart
+d1_ret: ld hl,(dptr)
+        ret
+
+dshow:  call lstart
         call putsi
         db ".,",0
         ld hl,(daddr)
@@ -1611,7 +1851,6 @@ dl2:    call putsi
         djnz dl2
 dl3:    ld hl,dtext
         call puts
-        call down
         ld hl,(dptr)
         ret
 

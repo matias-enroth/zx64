@@ -288,6 +288,12 @@ an `M` line, the hex or the characters (`PRINT` to `PRONT`). A changed
 character keeps the byte's inverse; one the ZX81 hasn't got (`!`) is `?`.
 Numbers are hex; `=` converts. RUN/STOP stops a long listing.
 
+CRSR UP on the top row and CRSR DOWN on the bottom one scroll an `M` or
+`D` listing: the line before or after it comes in, and `M` or `D` alone
+goes on after the last. Going back in a `D` listing, the monitor finds
+the instruction before by disassembling from a few bytes earlier; data
+mixed with the code can make that come out differently.
+
     M s [e]          memory, 8 bytes a line, with their ZX81 characters
     D s [e]          disassemble; M or D alone goes on
     A a text         assemble at a
