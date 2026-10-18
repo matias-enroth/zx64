@@ -85,16 +85,17 @@ Done after 1.0 (2026-10-18):
 - [x] Scrolling `M` and `D` listings with CRSR UP/DOWN at the screen's edges
 - [x] A C64 reset with the monitor in RAM, then zx64 and F5: the monitor
       loaded again, on a clear screen
+- [x] CRSR DOWN under a short listing: the rows to the bottom filled, the
+      cursor staying there; a `D` then an `M` listing scroll up and down
+      each from its own edge
+- [x] RETURN on an `M` line: the line drawn again, a changed character
+      over an inverse one shown inverse
 
 Not yet tried there:
 
 - [ ] The manual's hello world, both ways, and its breakpoint on `RST $10`
 - [ ] `W "HELLO"` in the monitor, `X` to BASIC after `L`; `L` and `LOAD`
       of a PRG of code: refused
-- [ ] CRSR DOWN on the bottom row under a short listing: the rows down to
-      the bottom filled, the cursor staying there
-- [ ] RETURN on an `M` line: the line drawn again, a changed character
-      over an inverse one shown inverse
 
 ## pcheck on real programs
 
