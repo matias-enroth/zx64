@@ -1568,6 +1568,53 @@ def main():
           listed == "BREAKPOINTS 7003" and regs.startswith(";7003 02") and m.z.memory[0x7100] == 3
           and report(m) == "0/0", f"{listed!r} {regs[:10]!r} {report(m)}")
 
+    # the manual's hello world: a REM line, A, the text with :, RUN; then
+    # a breakpoint on its RST $10; then the ROM's own string printer
+    m = Machine(int_wired=True)
+    m.boot()
+    m.drive.files[b"ZX64MON"] = mon
+    m.drive.files[b"ZX64MON2"] = mon2
+    m.type("1 E " + " ".join("01234567890123456789012") + " NEWLINE")   # 1 REM ...
+    m.type("1 0 T SHIFT+NEWLINE L 1 6 5 1 4 NEWLINE")                   # 10 RAND USR 16514
+    m.tap("F5")
+    for line in ("A 4082 LD HL,$408D", "LD A,(HL)", "INC A", "RET Z", "DEC A", "RST $10", "INC HL",
+                 "JR $4085", "", ":408D 'HELLO WORLD' FF", "X"):
+        m.mtype(line + "\r", settle=20)
+    m.run(10)
+    r = enter(m, "R")
+    shown = m.screen()[0]
+    m.tap("F5")
+    m.mtype("B 4089\r")
+    m.mtype("X\r", settle=20)
+    m.type("R")
+    m.keys = {C64KEY[ZXKEY["NEWLINE"]]}
+    m.run(3)
+    m.keys = set()
+    m.run(30)
+    regs = [next((r for r in reversed(m.mscreen()) if r.startswith(";")), "")]
+    m.mtype("S\r", settle=20)                  # into the ROM
+    regs.append(next((r for r in reversed(m.mscreen()) if r.startswith(";")), ""))
+    m.mkey("DEL")                                # ".S" offered: INST/DEL it, then G
+    m.mtype("G\r", settle=30)
+    regs.append(next((r for r in reversed(m.mscreen()) if r.startswith(";")), ""))
+    m.mtype("B 4089\r")
+    m.mtype("G\r", settle=20)
+    m.until(m.ready, 300, "the ROM ready for a key")
+    m.run(3)
+    check("hello world as in the manual: A at $4082, :408D 'HELLO WORLD' FF, RUN; B 4089 stops at the "
+          "RST $10 with A = H, S: to $0010, G: again with E; B off, G: the rest",
+          shown == "HELLO WORLD" and r == "0/10" and regs[0].startswith(";4089 2D")
+          and regs[1].startswith(";0010 2D") and regs[2].startswith(";4089 2A") and m.screen()[0] == "HELLO WORLD"
+          and report(m) == "0/10",
+          f"{shown!r} {r} {regs} {m.screen()[0]!r} {report(m)}")
+    m.tap("F5")
+    for line in ("A 4082 LD DE,$408B", "LD BC,$000B", "JP $0B6B", "", ":408B 'HELLO WORLD", "", "X"):
+        m.mtype(line + "\r", settle=20)
+    m.run(10)
+    r = enter(m, "R")
+    check("and with the ROM's string printer: LD DE / LD BC / JP $0B6B", m.screen()[0] == "HELLO WORLD"
+          and r == "0/10", f"{m.screen()[0]!r} {r}")
+
     # ---- tools/pcheck.py, on a program made for it: each IN and OUT, and
     # what zx64 makes of it
     import pcheck

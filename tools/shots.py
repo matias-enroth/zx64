@@ -216,18 +216,16 @@ def sc_monitor():
 
 
 def sc_asm():
-    """1 REM with room for code; A assembles; RUN; M and PEEK."""
+    """1 REM with room for hello world; A assembles, : the text; LIST; RUN; M."""
     m = machine()
     m.boot()
-    m.type("1 E " + " ".join("012345678901234567890123") + " NEWLINE")
-    m.type("1 0 P SHIFT+NEWLINE L 1 6 5 1 4 NEWLINE")              # 10 PRINT USR 16514
-    m.type("2 0 P SHIFT+NEWLINE O 1 6 5 3 4 SHIFT+K 2 5 6 SHIFT+B "
-           "SHIFT+NEWLINE O 1 6 5 3 5 NEWLINE")                      # 20 PRINT PEEK ...
+    m.type("1 E " + " ".join("01234567890123456789012") + " NEWLINE")
+    m.type("1 0 T SHIFT+NEWLINE L 1 6 5 1 4 NEWLINE")              # 10 RAND USR 16514
     m.run(5)
     m.tap("F5")
     m.run(60)
-    mon(m, "A 4082 LD HL,$0000", "LD B,$64", "LD E,B", "LD D,$00", "ADD HL,DE", "DJNZ $4087",
-        "LD ($4096),HL", "LD B,H", "LD C,L", "RET", "")
+    mon(m, "A 4082 LD HL,$408D", "LD A,(HL)", "INC A", "RET Z", "DEC A", "RST $10", "INC HL",
+        "JR $4085", "", ":408D 'HELLO WORLD' FF")
     shot(m, "asm")
     mon(m, "X")
     m.run(30)

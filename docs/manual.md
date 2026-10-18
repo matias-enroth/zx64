@@ -320,33 +320,40 @@ refuse the 6510's page and the I/O chips.
 
 The classic ZX81 way: a `REM` line at the start of the program holds the
 machine code. Its first byte after the `REM` is at 16514 (`$4082`), and
-`USR 16514` runs it, returning BC as the result.
+`USR 16514` runs it.
 
-This one adds 1 to 100 and leaves the sum in BC and in memory. First the
-room for it, 24 bytes of `REM`, and two lines to run it:
+Hello world. First the room for it, 23 bytes of `REM`, and a line to run
+it:
 
-    1 REM 012345678901234567890123
-    10 PRINT USR 16514
-    20 PRINT PEEK 16534+256*PEEK 16535
+    1 REM 01234567890123456789012
+    10 RAND USR 16514
 
 Then F5, and `A` at `$4082`. After each line the monitor offers the next
-address; RETURN on an empty one ends:
+address; RETURN on an empty one ends. Then the text, after the code:
 
-    A 4082 LD HL,$0000
-    LD B,$64
-    LD E,B
-    LD D,$00
-    ADD HL,DE
-    DJNZ $4087
-    LD ($4096),HL
-    LD B,H
-    LD C,L
-    RET
+    A 4082 LD HL,$408D
+    LD A,(HL)
+    INC A
+    RET Z
+    DEC A
+    RST $10
+    INC HL
+    JR $4085
+
+    :408D 'HELLO WORLD' FF
 
 <p align="center">
-  <img src="img/shot-asm.png" width="49%" alt="The assembler: each line turned into its address, bytes and instruction">
-  <img src="img/shot-rem.png" width="49%" alt="LIST: the REM line now shows the machine code as ZX81 characters and keywords">
+  <img src="img/shot-asm.png" width="49%" alt="The assembler: each line turned into its address, bytes and instruction, then the text">
+  <img src="img/shot-rem.png" width="49%" alt="LIST: 1 REM, the code as characters and keywords, HELLO WORLD and COPY">
 </p>
+
+`RST $10` is the ZX81's CHROUT: it prints the character in A, keywords
+and NEWLINE too, and keeps BC, DE and HL (it works in the other register
+set, with `EXX`). The text ends with `FF` (see [Text in
+memory](#text-in-memory)): `INC A` makes it 0, and `RET Z` goes back to
+BASIC. `USR` returns BC as its value; `RAND USR` throws it away, `PRINT
+USR` would print it after the text. Leave IY alone (the ROM needs
+`$4000` in it), and IX.
 
 The assembler takes Zilog's mnemonics as `D` writes them, numbers as
 `$12` or with a leading digit, `0DE` (a bare `DE` is the register). It
@@ -357,26 +364,45 @@ machine. A line from `D` changed on the screen and entered is assembled
 too.
 
 `X`, then `LIST`: the `REM` now holds the code, shown as ZX81 characters
-and keywords. `RUN` prints 5050 twice: once from BC, once from the two
-bytes at `$4096` (16534). `M 4082 4099` shows them as `BA 13`:
+and keywords, then `HELLO WORLD`, and the `FF` as `COPY` (the keyword
+with that code). Some of the code is missing: `$7E` marks a number in a
+BASIC line, and `LIST` skips the 5 bytes after it. `RUN` prints `HELLO
+WORLD`. `M 4082 4099` shows all the bytes, and the text:
 
 <p align="center">
-  <img src="img/shot-mon-m.png" width="70%" alt="M 4082 4099: the code, and BA 13 at 4096">
+  <img src="img/shot-mon-m.png" width="70%" alt="M 4082 4099: the code, then HELLO WORLD and FF">
 </p>
 
-To watch it run, set a breakpoint and step:
+To watch it run, set a breakpoint on the `RST $10`:
 
-    B 408D           a breakpoint after the loop
+    B 4089           a breakpoint on the RST $10
     X                back to BASIC; RUN
-                     the monitor opens at 408D: HL = 13BA
-    S                LD ($4096),HL, then the registers
-                     RETURN steps again; INST/DEL the S and G goes on
+                     the monitor opens at 4089: A = 2D, an H
+    G                on: it stops there again, A = 2A, an E
+    B 4089           the breakpoint off; G, and the rest is printed
 
-A breakpoint is a `RST $38` in place of the instruction's first byte;
-zx64's interrupt handler tells it from an interrupt. It works without
-the `/INT` wire too. The monitor puts the real bytes back while it's
-open, so `M` and `D` show the code as it is. Not possible: breakpoints in
-zx64 or the monitor (`$2000-$3FFF`), at `$0038`, or from `$C000` up.
+`S` steps one instruction instead; on the `RST $10` it goes into the
+ROM, at `$0010`. RETURN steps again; INST/DEL the `S`, and `G` goes on. A breakpoint is a `RST $38` in place of the
+instruction's first byte; zx64's interrupt handler tells it from an
+interrupt. It works without the `/INT` wire too. The monitor puts the
+real bytes back while it's open, so `M` and `D` show the code as it is.
+Not possible: breakpoints in zx64 or the monitor (`$2000-$3FFF`), at
+`$0038`, or from `$C000` up.
+
+The ROM has a string printer too, the one `PRINT "..."` uses: BC
+characters from DE, at `$0B6B`. With it, hello world is three
+instructions and needs no end mark:
+
+    A 4082 LD DE,$408B
+    LD BC,$000B
+    JP $0B6B
+
+    :408B 'HELLO WORLD
+
+`$000B` is the length, 11. The `JP` lets the ROM's routine return to
+BASIC itself. Unlike the C64's kernal table, `$0B6B` is just where the
+routine is in this ROM, not an entry point anyone promised to keep;
+`RST $10`'s address is fixed by the Z80 itself.
 
 ### Reading the ROM
 
