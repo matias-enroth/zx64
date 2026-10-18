@@ -1191,6 +1191,37 @@ def main():
           "wins where the text is as it was; ! (no ZX81 code): ?, nothing stored",
           shown == ".:7300 35 37 2E 33 39 00 A6 F5 PRINT A." and got == want[1:]
           and after[3] == "?", f"{shown!r} {[g.hex() for g in got]} {after}")
+    def zxs(text):
+        return bytes(ZX.index(c) for c in text)
+    def colon(text):                             # a : line, its bytes from a, the row after
+        m.mtype(text + "\r")
+        scr = m.mscreen()
+        i = max((i for i, r in enumerate(scr) if r.lstrip(".") == text), default=24)
+        return scr[i + 1] if i < 24 else ":none"
+    m.mtype("F 7400 74FF 99\r")
+    fox = "THE QUICK BROWN FOX JUMPS OVER THE LAZY DOG"
+    nxt = colon(":7400 'THE QUICK BROWN FOX JUMPS OVER T")      # to column 39
+    m.mtype("HE LAZY DOG' FF\r")
+    scr = m.mscreen()
+    end = next((scr[i + 1] for i in range(24, -1, -1) if scr[i] == ":7420 'HE LAZY DOG' FF"), ":none")
+    nxt2 = colon(":7500 'THE QUICK BROWN FOX JUMPS")    # the manual's
+    m.mtype(" OVER THE LAZY DOG' FF\r")
+    rows = [colon(":7440 'A'"), colon(":7450 01 'AB' 02"), colon(":7460 'A!B"), colon(":7470 '"),
+            colon(":7480 'AB '")]
+    mem = bytes(m.z.memory[0x7400:0x7490])
+    check(":7400 'TEXT: ZX81 codes, the next line offered (:7420 ') while the text runs to the end; "
+          "'...' closed, mixed with bytes, a trailing space kept; ! (no ZX81 code): ?, nothing stored",
+          nxt == ":7420 '" and mem[:0x2C] == zxs(fox) + b"\xFF" and nxt2 == ":7519 '"
+          and bytes(m.z.memory[0x7500:0x752C]) == zxs(fox) + b"\xFF" and not end.startswith(":")
+          and mem[0x40:0x42] == zxs("A") + b"\x99" and mem[0x50:0x55] == b"\x01" + zxs("AB") + b"\x02\x99"
+          and mem[0x60:0x62] == b"\x99\x99" and rows[2] == "?" and mem[0x70] == 0x99
+          and not any(r.startswith(":") for r in rows) and mem[0x80:0x84] == zxs("AB ") + b"\x99",
+          f"{nxt!r} {end!r} {rows} {mem[:0x2C].hex()} {mem[0x40:].hex()}")
+    boot = open(os.path.join(ROOT, "build", "zx81.prg"), "rb").read()[2:2 + 0x0F]
+    check("scrolling clears the new bottom row, and nothing past the screen (C64 $07E8-$080F: the "
+          "sprite pointers, the boot file's start)", m.mscreen()[-1] == "" and
+          bytes(m.z.memory[0xF801:0xF810]) == boot and m.z.memory[0xF7F8] != 0x20,
+          f"{m.mscreen()[-1]!r} {bytes(m.z.memory[0xF801:0xF810]).hex()} {boot.hex()}")
     m.mtype("T 7000 700F 7100\r")
     m.mtype(":7105 99\r")
     m.mtype("C 7000 700F 7100\r")

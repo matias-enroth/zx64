@@ -16,8 +16,8 @@
 ;   L "NAME" [a]   load a file (to a)
 ;   W "NAME" s e   write memory to a file
 ;   @[text]        the drive's status; a DOS command
-;   : a b b ...    store bytes (M's lines, hex or characters changed and
-;                  RETURN pressed)
+;   : a b 'TEXT'   store bytes and ZX81 text (M's lines, hex or characters
+;                  changed and RETURN pressed)
 ;   R              the registers, as a ";" and a "'" line to change
 ;   ; pc af bc de hl sp ix iy
 ;   ' af' bc' de' hl' i iff
@@ -273,8 +273,9 @@ dn_scr: ld hl,MSCR+40
         ld de,MSCR
         ld bc,960
         ldir
+        ex de,hl                ; DE: the last row (HL is past the screen)
         ld b,40
-dn_cl:  ld (hl),$20             ; HL: the last row
+dn_cl:  ld (hl),$20
         inc hl
         djnz dn_cl
 dn_done:
@@ -874,36 +875,99 @@ cm_next:
         ret c                   ; past $FFFF
         jr cm_line
 
-; : a b b ...: up to 8 bytes from a. After 8, an M line's characters (a
-; space, then 8): one that is not as the byte at a showed it is stored as
-; its ZX81 code, inverse if the byte is; as it was, the hex goes. A
-; character with no ZX81 code: "?". All spaces: no text (typed by hand).
-; Read into pat first, so "?" stores nothing.
+; : a b b ... 'TEXT' b ...: bytes from a, and text as ZX81 codes ("'" is
+; no ZX81 character). A text running to the end of the line (no closing
+; "'", trailing spaces left out) offers the next line, ":a '", to go on.
+; After 8 bytes and no text, an M line's characters (a space, then 8):
+; one that is not as the byte at a showed it is stored as its ZX81 code,
+; inverse if the byte is; as it was, the hex goes. All spaces: no text
+; (typed by hand). A character with no ZX81 code: "?". Read into pat
+; first, so "?" stores nothing; a line holds fewer bytes than pat.
 cmd_colon:
         ld hl,(lptr)
         call needw
         ld (a1),de
         ld de,pat
-        ld c,0                  ; bytes read
-co1:    push de
+        ld bc,0                 ; B: a text seen, C: bytes read
+co1:    call skipsp
+        cp $27
+        jr z,co_str
+        push de
         call getb
         pop de
         jr c,co_put
-        ld (de),a
-        inc de
-        inc c
-        bit 3,c
+        call co_byte
+        ld a,c                  ; 8 bytes, no text: an M line's characters?
+        cp 8
+        jr nz,co1
+        inc b
+        dec b
+        jr nz,co1
+        inc hl
+        ld a,(hl)
+        dec hl
+        cp $27
         jr z,co1
         call co_text
         ld c,8
-co_put: ld a,c
+co_put: call co_st
+        jp quietly
+
+co_str: inc hl                  ; 'TEXT: to the next "'" or the line's last
+        push hl                 ; non-space (a2)
+        ld hl,linebuf+40
+cs_ls:  dec hl
+        ld a,(hl)
+        cp ' '
+        jr z,cs_ls              ; (there is the ':' at least)
+        inc hl
+        ld (a2),hl
+        pop hl
+        ld b,1
+        call atend
+        jr z,co_put             ; "'" alone at the end: nothing more
+cs_ch:  call atend
+        jr z,cs_eol
+        ld a,(hl)
+        inc hl
+        cp $27
+        jr z,co1                ; closed
+        call a2zx
+        jp c,err
+        call co_byte
+        jr cs_ch
+cs_eol: call co_st              ; DE: where the next line goes on
+        ex de,hl
+        call lstart
+        ld a,':'
+        call pch
+        call phex4
+        call putsi
+        db " '",0
+        jp quietly
+
+atend:  push de                 ; Z: HL is at the text's end (a2)
+        ld de,(a2)
+        and a
+        sbc hl,de
+        add hl,de
+        pop de
+        ret
+
+co_byte:
+        ld (de),a
+        inc de
+        inc c
+        ret
+
+co_st:  ld a,c                  ; pat to a, C bytes; DE after them
+        ld de,(a1)
         or a
-        jr z,co_end
+        ret z
         ld b,0
         ld hl,pat
-        ld de,(a1)
         ldir
-co_end: jp quietly
+        ret
 
 co_text:
         ld a,(hl)               ; HL: after the 8th byte
@@ -1225,7 +1289,7 @@ help:   db "M S [E]     MEMORY, 8 BYTES A LINE",0
         db "L ",$22,"NAME",$22," [A] LOAD (AT A)",0
         db "W ",$22,"NAME",$22," S E WRITE S-E TO THE DISK",0
         db "@[TEXT]     THE DRIVE'S STATUS, A COMMAND",0
-        db ": A B ...   STORE BYTES",0
+        db ": A B 'TXT' STORE BYTES, ZX81 TEXT",0
         db "R           REGISTERS (; AND ' TO EDIT)",0
         db "G [A]       GO ON (AT A); X THE SAME",0
         db "F S E B     FILL",0
@@ -1380,7 +1444,7 @@ r_i:     db 0
 r_iff:   db 0
 kmat:    ds 8
 kprev:   ds 8
-pat:     ds 32
+pat:     ds 40
 linebuf: ds 41
 dtext:   ds 24
 klist:   ds 8                   ; the numbers' kinds and places (see koff)

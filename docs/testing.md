@@ -8,7 +8,7 @@ wire, SD2IEC. Emulator: VICE (`x64sc -cpmcart`, 3.7.1 and 3.10).
 `tools/simulate.py` runs the patched ROM and zx64 on a Z80 emulator and
 the 6510 loader on a 6502 emulator, switching as the cartridge does,
 with a fake VIC, CIA, colour RAM, kernal and drive. It types and reads
-the screen. 95 checks, with and without `/INT`, covering:
+the screen. 97 checks, with and without `/INT`, covering:
 
 - boot, typing, type-ahead and F1 (TEST typed fast: no ghost F), the
   cursor keys, F2/F3/F5/F7; no cartridge: a message and back to BASIC
@@ -80,6 +80,8 @@ Not yet tried there (after 1.0):
 
 - [ ] The monitor's `=`: `= C000`, `= +255`, `= %1010`
 - [ ] An `M` line's characters changed: `PRINT` to `PRONT` in the ROM
+- [ ] `:7000 'THE QUICK BROWN FOX JUMPS`, then the offered `:7019 '` line;
+      the bottom row clear after a `:` line scrolls the screen
 - [ ] A C64 reset with the monitor in RAM, BASIC text on the screen, then
       zx64 and F5: " LOADING ZX64MON", then a clear monitor screen
 

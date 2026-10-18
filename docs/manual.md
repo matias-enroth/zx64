@@ -291,7 +291,7 @@ Numbers are hex; `=` converts. RUN/STOP stops a long listing.
     M s [e]          memory, 8 bytes a line, with their ZX81 characters
     D s [e]          disassemble; M or D alone goes on
     A a text         assemble at a
-    : a b b ...      store bytes (what M's lines are, characters too)
+    : a b 'TEXT' ... store bytes and ZX81 text (M's lines too)
     R                the registers, as ; and ' lines to edit
     G [a]            carry on (at a); X does the same
     B [a]            breakpoint on or off (four at most); B alone lists
@@ -413,6 +413,28 @@ Back in BASIC, `LIST` shows `WRITE`, and the keyword works as before:
 the ROM finds keywords by their position in the table, not their text.
 F7 notices the changed ROM and reads it again from the disk, with the
 bar on the top row: " LOADING ZX81 ROM".
+
+The same as text: `:01C3 'WRIT' AA` (`AA` is an inverse `E`). Or `M 01C3`
+and type over `PRINT` on its line.
+
+### Text in memory
+
+`:` takes text between `'`s, as ZX81 characters, mixed with bytes. A
+text that runs to the end of the line needs no closing `'`, and the
+monitor offers the next line to go on with:
+
+    :7000 'THE QUICK BROWN FOX JUMPS
+    :7019 ' OVER THE LAZY DOG' FF
+
+The second line's `:7019 '` is the monitor's; type the rest after it.
+Spaces at a line's end are left out, so the space between the words
+starts the second line (or close the first with `'`). RETURN on the
+offered line with nothing added ends.
+
+The `FF` ends the string. Not `00`: that's the ZX81's space. The ROM's
+own ways are an inverse last character (the keyword table) and `$76`,
+NEWLINE (BASIC lines, the display file); `$FF` isn't a character at all,
+and `INC A` / `JR Z` finds it. `H 7000 7FFF 'LAZY` finds the text again.
 
 ### Disk commands
 
