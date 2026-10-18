@@ -290,7 +290,8 @@ Numbers are hex; `=` converts. RUN/STOP stops a long listing.
 
 CRSR UP on the top row and CRSR DOWN on the bottom one scroll an `M` or
 `D` listing: the line before or after it comes in, and `M` or `D` alone
-goes on after the last. Going back in a `D` listing, the monitor finds
+goes on after the last. Under a short listing, CRSR DOWN on the bottom
+row fills the rows down to it, and the cursor stays there. Going back in a `D` listing, the monitor finds
 the instruction before by disassembling from a few bytes earlier; data
 mixed with the code can make that come out differently.
 

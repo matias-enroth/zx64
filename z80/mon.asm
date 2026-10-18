@@ -737,10 +737,11 @@ in_end: call cpos
 
 ; Scrolling, as Super Snapshot's monitor does. CRSR UP on the top row,
 ; an M or D line: the screen moves down and the line before it comes in.
-; CRSR DOWN on the bottom row: the line after the lowest M or D line, in
-; the row under it if that is empty or only the prompt's ".", else at the
-; bottom, the screen moved up. M and D alone then go on after it. No M or
-; D line: as before.
+; CRSR DOWN on the bottom row: the line after the lowest M or D line, at
+; the bottom, the screen moved up; if the rows under that line are empty
+; or only the prompt's ".", the lines after it fill them down to the
+; bottom instead. The cursor stays on the bottom row; M and D alone then
+; go on after the last. No M or D line: as before.
 sc_up:  ld hl,MSCR
         call rowmd
         ret c
@@ -808,10 +809,16 @@ sd_add: add hl,de
         jr nz,sd_in
         call down               ; at the bottom: up a row
         jr sd_put
-sd_in:  inc a                   ; the empty row under it
+sd_in:  inc a                   ; the empty rows under it, to the bottom
         ld (crow),a
+        call scline
+        ld (a3),hl
+        ld a,(crow)
+        cp 24
+        jr c,sd_in
+        jr sd_end
 sd_put: call scline
-        ld a,(sc_ty)
+sd_end: ld a,(sc_ty)
         cp ':'
         jr z,sd_m
         ld (dnext),hl

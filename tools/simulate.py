@@ -1632,6 +1632,21 @@ def main():
     check("CRSR UP 25 times over code with every prefix (DD CB d op too), RST $08's DB and prefix "
           "bytes as data: every line as D lists it forward", got == want,
           f"{[(g, w) for g, w in zip(got, want) if g != w][:3]}")
+    def short(cmd, kind):                        # a short listing, the cursor taken down
+        m.mkey("HOME", "LSHIFT")                 # to row 24, CRSR DOWN: the rows under it
+        m.mtype(cmd + "\r", settle=30)           # filled, the cursor staying at the bottom
+        while m.z.memory[mlb["crow"]] < 24:
+            m.mkey(*dn)
+        m.mkey(*dn)
+        m.run(20)                                # ~2 lines a frame
+        return m.mscreen(), m.z.memory[mlb["crow"]]
+    ms, mrow = short("M 7000 7017", ".:")
+    ds, drow = short("D 7000 7008", ".,")
+    want_d = [ref[a] for a in addrs[:25] if a >= 0x7000][:25]
+    check("CRSR DOWN on the bottom row under a short listing: the rows down to the bottom filled "
+          "with the next lines, the cursor staying on row 24 (M and D)",
+          [r[:6] for r in ms[1:]] == [f".:{0x7000 + 8 * i:04X}" for i in range(24)] and mrow == 24
+          and ds[1:] == want_d[:24] and drow == 24, f"{ms[1:4]} {ms[-2:]} {mrow} {ds[1:4]} {ds[-2:]} {drow}")
     m.mkey("HOME", "LSHIFT")
     m.mtype("M 7000 70BF\r", settle=60)          # 24 lines: the first scrolls away
     m.mkey(*dn)
