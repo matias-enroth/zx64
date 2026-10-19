@@ -17,7 +17,8 @@
 ;   W "NAME" [s e] save the program, as SAVE; memory to a file
 ;   @[text]        the drive's status; a DOS command
 ;   : a b 'TEXT'   store bytes and ZX81 text (M's lines, hex or characters
-;                  changed and RETURN pressed)
+;                  changed and RETURN pressed); reversed characters inverse
+;   Z n            line 1 a REM of n bytes, from 16514 ($4082)
 ;   R              the registers, as a ";" and a "'" line to change
 ;   ; pc af bc de hl sp ix iy
 ;   ' af' bc' de' hl' i iff
@@ -27,7 +28,8 @@
 ;   = n            n in hex, decimal and binary (+n decimal, %n binary)
 ;   ?              help
 ; The screen is edited as on a C64: the cursor keys, INST/DEL, CLR/HOME,
-; and RETURN takes the line the cursor is on. CRSR UP/DOWN at the top and
+; RVS ON and OFF (CTRL+9, CTRL+0), and RETURN takes the line the cursor
+; is on. CRSR UP/DOWN at the top and
 ; bottom scroll an M or D listing (sc_up, sc_dn). RUN/STOP stops a long
 ; listing. F5 or X goes back to the ZX81.
 
@@ -43,11 +45,29 @@ COLOUR:  equ $C800              ; C64 $D800
 MSCR:    equ $F400              ; C64 $0400, the monitor's screen
 MSTACK:  equ $D800              ; its stack, from $D7FF down: C64 $E400-$E7FF,
                                 ; free between the ZX81's screen and font
+; Buffers, at the stack's far end (not in the file): the line's screen
+; codes (rvor), the line as ASCII, bytes from ":", D's text, A's numbers'
+; kinds and places (see koff), a candidate's bytes, the text's numbers'
+; values, the text and a candidate's normalized, the keys
+LINERV:  equ $D400
+linebuf: equ LINERV+40          ; 41
+pat:     equ linebuf+41         ; 40
+dtext:   equ pat+40             ; 24
+klist:   equ dtext+24           ; 8
+cbuf:    equ klist+8            ; 4
+nval:    equ cbuf+4             ; 8
+cvals:   equ nval+8             ; 8
+ninp:    equ cvals+8            ; 40
+ncand:   equ ninp+40            ; 24
+kmat:    equ ncand+24           ; 8
+kprev:   equ kmat+8             ; 8, to $D4FD
 BORDERCOL: equ 14                ; the C64's colours: light blue on blue
 BACKCOL:  equ 6
 TEXTCOL:  equ 14
 
 K_RETURN: equ 13                ; key codes, as PETSCII
+K_RVSON: equ 18
+K_RVSOFF: equ 146
 K_DOWN:  equ 17
 K_HOME:  equ 19
 K_DEL:   equ 20
@@ -581,7 +601,20 @@ gk_tab: add hl,de
         ld a,(hl)
         or a
         jp z,getkey             ; no key of ours
-        push af
+        ld e,a
+        ld a,(kmat+7)           ; CTRL (column 7, row 2): 9 is RVS ON, 0 RVS OFF
+        and 4
+        ld a,e
+        jr nz,gk_ret
+        cp '9'
+        ld a,K_RVSON
+        jr z,gk_ret
+        ld a,e
+        cp '0'
+        ld a,K_RVSOFF
+        jr z,gk_ret
+        ld a,e
+gk_ret: push af
         call curoff
         pop af
         ret
@@ -631,6 +664,7 @@ abort:  ld sp,MSTACK
 getline:
         xor a
         ld (curst),a
+        ld (rvs),a              ; RVS OFF, as RETURN does on a C64
         inc a
         ld (blinkc),a
 gl_key: call getkey
@@ -653,15 +687,21 @@ gl_key: call getkey
         cp K_DEL
         jr z,delch
         cp K_INST
-        jr z,insch
+        jp z,insch
         cp K_F5
         jp z,leave
+        cp K_RVSON
+        jr z,rvon
+        cp K_RVSOFF
+        jr z,rvoff
         cp ' '
         ret c
         cp $60
         ret nc
         call a2s                ; typed: at the cursor, which moves on to
-        push af                 ; column 39 at most
+        ld hl,rvs               ; column 39 at most; reversed after RVS ON
+        or (hl)
+        push af
         call cpos
         pop af
         ld (hl),a
@@ -671,6 +711,11 @@ crright:
         ret nc
         inc a
         ld (ccol),a
+        ret
+rvon:   ld a,$80
+        jr rv_set
+rvoff:  xor a
+rv_set: ld (rvs),a
         ret
 crleft: ld a,(ccol)
         or a
@@ -916,6 +961,11 @@ dc2:    pop de
         ret
 
 gl_ret: call rowp
+        push hl                 ; the row as it is, for rvor
+        ld de,LINERV
+        ld bc,40
+        ldir
+        pop hl
         ld de,linebuf
         ld b,40
 gr1:    ld a,(hl)               ; screen codes back to ASCII
@@ -1015,6 +1065,8 @@ cmds:   db 'M'
         dw cmd_help
         db '='
         dw cmd_eq
+        db 'Z'
+        dw cmd_z
         db 0
 
 err:    ld sp,MSTACK            ; "?", and the prompt
@@ -1101,10 +1153,11 @@ ml_c:   ld a,(hl)
 ; no ZX81 character). A text running to the end of the line (no closing
 ; "'", trailing spaces left out) offers the next line, ":a '", to go on.
 ; After 8 bytes and no text, an M line's characters (a space, then 8):
-; one that is not as the byte at a showed it is stored as its ZX81 code,
-; inverse if the byte is; as it was, the hex goes. All spaces: no text
-; (typed by hand). An M line is drawn again from memory after it. A
-; character with no ZX81 code: "?". Read into pat
+; one that is not as the byte at a showed it is stored as its ZX81 code;
+; as it was (reversed or not too), the hex goes. All spaces, none
+; reversed: no text (typed by hand). An M line is drawn again from memory
+; after it. In both, a character reversed on the screen (RVS ON) is
+; stored inverse. A character with no ZX81 code: "?". Read into pat
 ; first, so "?" stores nothing; a line holds fewer bytes than pat.
 cmd_colon:
         ld hl,(lptr)
@@ -1154,8 +1207,11 @@ co_str: inc hl                  ; 'TEXT: to the next "'" or the line's last
 cs_ls:  dec hl
         ld a,(hl)
         cp ' '
-        jr z,cs_ls              ; (there is the ':' at least)
-        inc hl
+        jr nz,cs_le             ; (there is the ':' at least)
+        xor a
+        call rvor               ; a reversed space is text
+        jr z,cs_ls
+cs_le:  inc hl
         ld (a2),hl
         pop hl
         ld b,1
@@ -1169,6 +1225,9 @@ cs_ch:  call atend
         jr z,co1                ; closed
         call a2zx
         jp c,err
+        dec hl
+        call rvor
+        inc hl
         call co_byte
         jr cs_ch
 cs_eol: call co_st              ; DE: where the next line goes on
@@ -1214,6 +1273,9 @@ co_text:
 ct_sp:  ld a,(hl)
         cp ' '
         jr nz,ct_go
+        xor a
+        call rvor
+        jr nz,ct_go
         inc hl
         djnz ct_sp
         pop hl                  ; all spaces
@@ -1225,14 +1287,18 @@ ct_go:  pop hl
 ct1:    ld a,(de)               ; as the byte showed: the hex goes
         call zxch
         cp (hl)
+        jr nz,ct_new
+        xor a
+        call rvor
+        ld c,a
+        ld a,(de)
+        and $80
+        cp c
         jr z,ct_same
-        ld a,(hl)
+ct_new: ld a,(hl)
         call a2zx
         jp c,err
-        ld c,a
-        ld a,(ix+0)
-        and $80
-        or c
+        call rvor
         ld (ix+0),a
 ct_same:
         inc hl
@@ -1240,6 +1306,168 @@ ct_same:
         inc ix
         djnz ct1
         ret
+
+; HL: a place in linebuf. A with bit 7 set if that column was reversed
+; on the screen; Z if A is 0 then. Keeps all else.
+rvor:   push hl
+        push bc
+        ld bc,LINERV-linebuf
+        add hl,bc
+        ld c,a
+        ld a,(hl)
+        and $80
+        or c
+        pop bc
+        pop hl
+        ret
+
+; Z n: line 1 a REM of n bytes, the room for code at 16514 ($4082). No
+; line 1: one made before the program, NOPs and a RET last; no program:
+; 10 RAND USR 16514 after it too. Line 1 a REM already: n bytes long now,
+; NOPs added or bytes cut at its end, the rest kept. The program moves
+; under whatever ran, so leaving goes to BASIC, as after L "NAME".
+PROG:    equ $407D              ; the program's first line
+POINTERS: equ $09AD             ; the ROM's: D_FILE to STKEND past HL, + BC
+
+cmd_z:  ld hl,(lptr)
+        call needw
+        ld a,d                  ; 1 to $3FFF
+        cp $40
+        jp nc,err
+        or e
+        jp z,err
+        ld (a1),de
+        ld hl,($400C)           ; D_FILE: no program?
+        ld de,PROG
+        sbc hl,de               ; (carry clear: or)
+        ld bc,6+18              ; line 1 and line 10
+        jr z,zmake
+        ld hl,(PROG)            ; the first line's number, high byte first
+        ld a,l
+        or a
+        jr nz,zins
+        ld a,h
+        cp 1
+        jr z,zrem
+        jp c,err                ; a line 0
+zins:   ld bc,6
+zmake:  push bc
+        ld hl,(a1)
+        add hl,bc
+        ld b,h
+        ld c,l
+        ld hl,PROG
+        call zmove
+        pop bc
+        jp c,err
+        ld hl,$0100             ; line 1
+        ld (PROG),hl
+        ld a,$EA                ; REM
+        ld (PROG+4),a
+        ld hl,(a1)
+        ld de,$4081
+        add hl,de
+        ld (hl),$C9             ; RET, the last byte
+        inc hl
+        ld (hl),$76             ; NEWLINE
+        ld a,c
+        cp 6
+        jr z,zlen
+        inc hl
+        ex de,hl
+        ld hl,zline10
+        ld bc,18
+        ldir
+        jr zlen
+zrem:   ld a,(PROG+4)
+        cp $EA
+        jp nz,err               ; line 1 is no REM
+        ld hl,(a1)              ; its NEWLINE on: moved by n + 2 - its
+        inc hl                  ; length
+        inc hl
+        ld de,(PROG+2)
+        and a
+        sbc hl,de
+        ld b,h
+        ld c,l
+        ld hl,$4080
+        add hl,de
+        call zmove
+        jp c,err
+zlen:   ld hl,(a1)              ; the length: REM, n bytes, NEWLINE
+        inc hl
+        inc hl
+        ld (PROG+2),hl
+        ld de,($400C)           ; NXTLIN at the end: going on stops there,
+        ld ($4029),de           ; report 0
+        ld a,1
+        ld (loaded),a
+        ld de,$407F             ; "REM 4082-" the last byte
+        add hl,de
+        push hl
+        call lstart
+        call putsi
+        db "REM 4082-",0
+        pop hl
+        call phex4
+        jp down
+
+; HL to STKEND moved on by BC (or back: BC < 0), and the system
+; variables with them; new room NOPs. Carry: no room below the ZX81's
+; SP (STKEND + BC + 36, as the ROM's TEST-ROOM).
+zmove:  ld a,b
+        or c
+        ret z
+        ld (a2),hl
+        ld (a3),bc
+        bit 7,b
+        jr nz,zm1
+        ld hl,($401C)           ; STKEND
+        add hl,bc
+        ld bc,36
+        add hl,bc
+        ld bc,(r_sp)
+        sbc hl,bc
+        ccf
+        ret c
+zm1:    ld hl,(a2)
+        ld bc,(a3)
+        dec hl
+        call POINTERS           ; DE: the old STKEND, BC: it - HL + 1
+        dec bc                  ; the bytes from a2 to STKEND
+        dec bc
+        ld a,(a3+1)
+        rla
+        jr c,zm_dn
+        ex de,hl                ; on: from the last byte down
+        dec hl
+        push hl
+        ld de,(a3)
+        add hl,de
+        ex de,hl
+        pop hl
+        lddr
+        ld hl,(a2)
+        ld bc,(a3)
+zm_nop: ld (hl),0
+        inc hl
+        dec bc
+        ld a,b
+        or c
+        jr nz,zm_nop
+        ret
+zm_dn:  inc hl                  ; back: from the first byte up
+        push hl
+        ld de,(a3)
+        add hl,de
+        ex de,hl
+        pop hl
+        ldir
+        and a
+        ret
+
+zline10: db $00,$0A,$0E,$00,$F9,$D4  ; 10 RAND USR 16514
+        db $1D,$22,$21,$1D,$20,$7E,$8F,$01,$04,$00,$00,$76
 
 ; R: the registers, as lines that ";" and "'" take back.
 cmd_r:  call r_main
@@ -1532,6 +1760,7 @@ help:   db "M S [E]     MEMORY, 8 BYTES A LINE",0
         db "C S E D     COMPARE",0
         db "H S E B ... HUNT BYTES; H S E 'TEXT",0
         db "= N         HEX, +DEC, %BIN: ALL THREE",0
+        db "Z N         LINE 1: A REM OF N BYTES",0
         db "F5         BACK TO THE ZX81",0
         db 0
 
@@ -1632,6 +1861,7 @@ bk_db:   db 0
 crow:    db 0                   ; the cursor
 ccol:    db 0
 curst:   db 0                   ; the cursor's character is reversed
+rvs:     db 0                   ; RVS ON: $80
 blinkc:  db 0
 klast:   db $FF                 ; the key last taken (column * 8 + row)
 krep:    db 0                   ; frames it has been held
@@ -1684,22 +1914,11 @@ r_de2:   dw 0
 r_hl2:   dw 0
 r_i:     db 0
 r_iff:   db 0
-kmat:    ds 8
-kprev:   ds 8
-pat:     ds 40
-linebuf: ds 41
-dtext:   ds 24
-klist:   ds 8                   ; the numbers' kinds and places (see koff)
 aaddr:   dw 0                   ; A: where, the text, the encoding tried,
 atext:   dw 0                   ; its length, the pattern
 alen:    db 0
 apat:    dw 0
-cbuf:    ds 4
-nvc:     db 0                   ; the text's numbers, how many and their values
-nval:    ds 8
-cvals:   ds 8
-ninp:    ds 40                  ; the text, and a candidate's, normalized
-ncand:   ds 24
+nvc:     db 0                   ; the text's numbers, how many (nval)
 kptr:    dw klist
 part1end:
 

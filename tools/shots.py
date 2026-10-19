@@ -216,16 +216,19 @@ def sc_monitor():
 
 
 def sc_asm():
-    """1 REM with room for hello world; A assembles, : the text; LIST; RUN; M."""
+    """Z 17 makes the REM; A assembles, : the text (WORLD with RVS ON); LIST; RUN; M."""
     m = machine()
     m.boot()
-    m.type("1 E " + " ".join("01234567890123456789012") + " NEWLINE")
-    m.type("1 0 T SHIFT+NEWLINE L 1 6 5 1 4 NEWLINE")              # 10 RAND USR 16514
     m.run(5)
     m.tap("F5")
     m.run(60)
-    mon(m, "A 4082 LD HL,$408D", "LD A,(HL)", "INC A", "RET Z", "DEC A", "RST $10", "INC HL",
-        "JR $4085", "", ":408D 'HELLO WORLD' FF")
+    mon(m, "Z 17", "A 4082 LD HL,$408D", "LD A,(HL)", "INC A", "RET Z", "DEC A", "RST $10", "INC HL",
+        "JR $4085", "")
+    m.mtype(":408D 'HELLO ")
+    m.mkey("CTRL", "9")
+    m.mtype("WORLD")
+    m.mkey("CTRL", "0")
+    m.mtype("' FF\r", settle=60)
     shot(m, "asm")
     mon(m, "X")
     m.run(30)

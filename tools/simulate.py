@@ -1171,33 +1171,51 @@ def main():
     check("an M line changed on the screen and RETURN: stored", m.z.memory[0x7008:0x700A] == b"\x55\xAA",
           bytes(m.z.memory[0x7008:0x7010]).hex(" "))
     m.mkey("CRSRDOWN")
-    def mline(text):                             # an M line typed (as if edited): its
-        m.mtype(text + "\r")                    # row then (redrawn), the row after it
+    RVS, OFF = ("CTRL", "9"), ("CTRL", "0")
+    def medit(col, *keys):                       # M 7300 7300, up onto it, to col, keys
+        m.mtype("M 7300 7300\r")                 # (text, or CTRL+9 / CTRL+0), RETURN: the
+        m.mkey("CRSRDOWN", "LSHIFT")             # bytes, the row redrawn and its text's
+        for _ in range(col - 1):                 # reverse (r), the row after it
+            m.mkey("CRSRRIGHT")
+        for k in keys:
+            if isinstance(k, tuple):
+                m.mkey(*k)
+            else:
+                m.mtype(k, settle=0)
+        m.mtype("\r")
         scr = m.mscreen()
         i = max(i for i, r in enumerate(scr) if r.lstrip(".").startswith(":7300"))
-        redrawn.append((scr[i], m.z.memory[MSCR + 40 * i + 37]))
-        after.append(scr[i + 1])
-        return bytes(m.z.memory[0x7300:0x7308])
-    after, redrawn = [], []
+        rv = "".join("r" if c & 0x80 else "-" for c in m.z.memory[MSCR + 40 * i + 31:MSCR + 40 * i + 39])
+        return bytes(m.z.memory[0x7300:0x7308]).hex().upper(), scr[i], rv, scr[i + 1]
     m.mtype(":7300 35 37 2E 33 39 00 A6 F5\r")   # PRINT, space, inverse A, a token
     m.mtype("M 7300 7300\r")
-    shown = [r for r in m.mscreen() if r.startswith(".:7300")][-1]
-    got = [mline(":7300 35 37 2E 33 39 00 A6 F5 PRONT A."),   # O for I
-           mline(":7300 35 37 34 33 39 00 A6 F5 PRONT B."),   # B for an inverse A
-           mline(":7300 26 37 34 33 39 00 A7 F5 PRONT B."),   # hex changed, text not
-           mline(":7300 26 37 34 33 39 00 A7 F5 ARONT B!"),   # no ZX81 "!": ?
-           mline(":7300 01 02 03 04 05 06 07 08")]            # typed, no text
-    want = [bytes.fromhex(h) for h in ("35372E333900A6F5", "353734333900A6F5", "353734333900A7F5",
-                                       "263734333900A7F5", "263734333900A7F5", "0102030405060708")]
-    check("an M line's characters changed and RETURN: stored as ZX81 codes (inverse kept), hex still "
-          "wins where the text is as it was; ! (no ZX81 code): ?, nothing stored",
-          shown == ".:7300 35 37 2E 33 39 00 A6 F5 PRINT A." and got == want[1:]
-          and after[3] == "?", f"{shown!r} {[g.hex() for g in got]} {after}")
-    check("RETURN on an M line: the line drawn again from memory (hex as stored, the changed B "
-          "inverse, as the A it replaced was)",
-          redrawn[0][0] == ".:7300 35 37 34 33 39 00 A6 F5 PRONT A."
-          and redrawn[1] == (".:7300 35 37 34 33 39 00 A7 F5 PRONT B.", 0x82)
-          and redrawn[4][0] == ".:7300 01 02 03 04 05 06 07 08 ........", f"{redrawn}")
+    scr = m.mscreen()
+    i = max(i for i, r in enumerate(scr) if r.startswith(".:7300"))
+    shown = (scr[i], "".join("r" if c & 0x80 else "-" for c in m.z.memory[MSCR + 40 * i + 31:MSCR + 40 * i + 39]))
+    got = [medit(33, "O"),                       # O for I; the inverse A and token as they were
+           medit(37, "B"),                       # B for the inverse A: a B
+           medit(37, RVS, "B"),                  # RVS ON, B: an inverse B
+           medit(31, RVS, "P"),                  # the same P, reversed: inverse
+           medit(37, "A"),                       # an A, not reversed: not inverse
+           medit(31, "!")]                       # no ZX81 "!": ?, nothing stored
+    check("an M line's characters changed on the screen and RETURN: stored as they show, reversed "
+          "ones (RVS ON, CTRL+9) inverse, the others not; as M drew them (reversed too), the hex goes; "
+          "! (no ZX81 code): ?, nothing stored",
+          shown == (".:7300 35 37 2E 33 39 00 A6 F5 PRINT A.", "------rr")
+          and [g[0] for g in got] == ["353734333900A6F5", "35373433390027F5", "353734333900A7F5",
+                                      "B53734333900A7F5", "B5373433390026F5", "B5373433390026F5"]
+          and got[5][3] == "?", f"{shown} {got}")
+    check("RETURN on an M line: the line drawn again from memory, reversed as stored",
+          got[0][1:3] == (".:7300 35 37 34 33 39 00 A6 F5 PRONT A.", "------rr")
+          and got[2][1:3] == (".:7300 35 37 34 33 39 00 A7 F5 PRONT B.", "------rr")
+          and got[4][1:3] == (".:7300 B5 37 34 33 39 00 26 F5 PRONT A.", "r------r"), f"{got}")
+    m.mtype(":7300 01 02 03 04 05 06 07 08\r")   # typed: no text
+    m.mtype(":7308 00 00 00 00 00 00 00 00 ")
+    m.mkey(*RVS)
+    m.mtype("        \r")                         # eight reversed spaces: inverse spaces
+    check("a : line with 8 bytes and spaces after them: no text; reversed spaces: text, inverse",
+          bytes(m.z.memory[0x7300:0x7310]).hex().upper() == "0102030405060708" + "80" * 8,
+          bytes(m.z.memory[0x7300:0x7310]).hex())
     def zxs(text):
         return bytes(ZX.index(c) for c in text)
     def colon(text):                             # a : line, its bytes from a, the row after
@@ -1224,6 +1242,24 @@ def main():
           and mem[0x60:0x62] == b"\x99\x99" and rows[2] == "?" and mem[0x70] == 0x99
           and not any(r.startswith(":") for r in rows) and mem[0x80:0x84] == zxs("AB ") + b"\x99",
           f"{nxt!r} {end!r} {rows} {mem[:0x2C].hex()} {mem[0x40:].hex()}")
+    m.mtype(":7380 'HELLO ")
+    m.mkey(*RVS)
+    m.mtype("WORLD")
+    m.mkey(*OFF)
+    m.mtype("' FF\r")
+    m.mkey(*RVS)
+    m.mtype(":7390 'AB'")                         # RVS ON, then RETURN: off again
+    m.mtype("\r")
+    m.mtype(":7390 'AB'\r")
+    m.mtype(":73A0 'X")
+    m.mkey(*RVS)
+    m.mtype(" \r")                               # a reversed space ends the line: kept
+    m.mtype("\r")                                # (the next line offered: nothing)
+    mem = bytes(m.z.memory[0x7380:0x73A3])
+    check(":7380 'HELLO {RVS ON}WORLD{RVS OFF}' FF: WORLD inverse; RVS ON is off again after RETURN; "
+          "a reversed space at the text's end is text",
+          mem[:12] == zxs("HELLO ") + bytes(c | 0x80 for c in zxs("WORLD")) + b"\xFF"
+          and mem[0x10:0x12] == zxs("AB") and mem[0x20:0x22] == zxs("X") + b"\x80", mem.hex())
     boot = open(os.path.join(ROOT, "build", "zx81.prg"), "rb").read()[2:2 + 0x0F]
     check("scrolling clears the new bottom row, and nothing past the screen (C64 $07E8-$080F: the "
           "sprite pointers, the boot file's start)", m.mscreen()[-1] == "" and
@@ -1720,6 +1756,83 @@ def main():
     m.tap("F5")
     m.mtype('W "HELLO"\r', settle=200)               # the program, for the L tests below
     hello = m.drive.files.get(b"HELLO", b"")
+
+    # Z n: line 1 a REM of n bytes at 16514; a new program gets 10 RAND
+    # USR 16514 too; a REM there is resized; then the manual's hello world
+    def zout(line):                              # Z ..., the monitor's answer
+        m.mtype(line + "\r", settle=20)
+        scr = m.mscreen()
+        return scr[max(i for i, r in enumerate(scr) if r.lstrip(".") == line) + 1]
+    def prog():
+        return bytes(m.z.memory[0x407D:m.peek16(0x400C)])
+    def zrem(n, code):
+        return bytes([0, 1]) + (n + 2).to_bytes(2, "little") + b"\xEA" + code + b"\x76"
+    line10 = bytes.fromhex("000A0E00F9D41D22211D207E8F0104000076")
+    m = Machine(int_wired=True)
+    m.boot()
+    m.drive.files[b"ZX64MON"] = mon
+    m.drive.files[b"ZX64MON2"] = mon2
+    m.tap("F5")
+    outs = [zout("Z 0"), zout("Z 4000"), zout("Z"), zout("Z 10")]
+    p1 = prog()
+    m.mtype("X\r", settle=20)
+    m.run(10)
+    r0 = report(m)
+    r1 = enter(m, "R")
+    check("Z 10 with no program: 1 REM, 15 NOPs and a RET, and 10 RAND USR 16514; REM 4082-4091; X: "
+          "BASIC, report 0; RUN: the RET, 0/10. Z 0, Z 4000, Z alone: ?",
+          outs == ["?", "?", "?", "REM 4082-4091"] and p1 == zrem(16, bytes(15) + b"\xC9") + line10
+          and r0 == "0/0" and r1 == "0/10", f"{outs} {p1.hex()} {r0} {r1}")
+    m.tap("F5")
+    out = zout("Z 17")
+    for line in ("A 4082 LD HL,$408D", "LD A,(HL)", "INC A", "RET Z", "DEC A", "RST $10", "INC HL",
+                 "JR $4085", ""):
+        m.mtype(line + "\r", settle=20)
+    m.mtype(":408D 'HELLO ")
+    m.mkey(*RVS)
+    m.mtype("WORLD")
+    m.mkey(*OFF)
+    m.mtype("' FF\r")
+    p2 = prog()
+    m.mtype("X\r", settle=20)
+    m.run(10)
+    r2 = enter(m, "R")
+    shown = m.screen()[0]
+    check("the manual's hello world: Z 17 grows the REM to 23 bytes (NOPs, the RET kept), A at $4082, "
+          ":408D 'HELLO {RVS ON}WORLD{RVS OFF}' FF; RUN: HELLO and an inverse WORLD",
+          out == "REM 4082-4098" and p2[:5] == zrem(23, b"")[:5] and p2[29:] == line10
+          and shown == "HELLO world" and r2 == "0/10", f"{out} {p2.hex()} {shown!r} {r2}")
+    m.tap("F5")
+    vars0, eline0 = m.peek16(0x4010), m.peek16(0x4014)
+    out = zout("Z 8")
+    p3 = prog()
+    check("Z 8: the REM cut to its first 8 bytes, the rest moved back (VARS, E_LINE 15 less)",
+          out == "REM 4082-4089" and p3 == zrem(8, p2[5:13]) + line10
+          and m.peek16(0x4010) == vars0 - 15 and m.peek16(0x4014) == eline0 - 15,
+          f"{out} {p3.hex()} {m.peek16(0x4010):04X} {vars0:04X}")
+    big = zout("Z 3F00")
+    check("Z 3F00: no room below the ZX81's stack: ?, nothing changed", big == "?" and prog() == p3, big)
+
+    m = Machine(int_wired=True)                  # a program without line 1; line 1 no REM
+    m.boot()
+    m.drive.files[b"ZX64MON"] = mon
+    m.drive.files[b"ZX64MON2"] = mon2
+    m.type("1 0 P 5 NEWLINE")                    # 10 PRINT 5
+    p0 = bytes(m.z.memory[0x407D:m.peek16(0x400C)])
+    m.tap("F5")
+    out = zout("Z 4")
+    p4 = prog()
+    m.mtype("X\r", settle=20)
+    m.run(10)
+    r4 = enter(m, "R")
+    shown = m.screen()[0]
+    m.type("1 P 1 NEWLINE")                      # 1 PRINT 1
+    m.tap("F5")
+    out2 = zout("Z 4")
+    check("Z 4 before 10 PRINT 5: 1 REM (3 NOPs, a RET) made, the program after it; RUN prints 5. "
+          "Line 1 a PRINT: ?",
+          out == "REM 4082-4085" and p4 == zrem(4, b"\0\0\0\xC9") + p0 and shown == "5" and r4 == "0/10"
+          and out2 == "?", f"{out} {p4.hex()} {shown!r} {r4} {out2}")
 
     # L and W without addresses: a program, as BASIC's LOAD and SAVE; with
     # them, memory as a PRG. A file that isn't a program is refused

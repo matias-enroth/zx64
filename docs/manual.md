@@ -284,10 +284,12 @@ learn.
 The screen works as a C64's: move the cursor anywhere, change what is
 there, press RETURN to enter that line. A memory line from `M` or a
 disassembly line from `D` can be edited in place and entered again; on
-an `M` line, the hex or the characters (`PRINT` to `PRONT`). A changed
-character keeps the byte's inverse; one the ZX81 hasn't got (`!`) is `?`.
-After RETURN the line is drawn again from memory, so it shows what was
-stored.
+an `M` line, the hex or the characters (`PRINT` to `PRONT`). The
+characters are stored as they show: a reversed one as the inverse
+character, a plain one not. To type reversed, RVS ON (CTRL+9), as on the
+C64; CTRL+0 or RETURN turns it off. A character the ZX81 hasn't got (`!`)
+is `?`. After RETURN the line is drawn again from memory, so it shows
+what was stored.
 Numbers are hex; `=` converts. RUN/STOP stops a long listing.
 
 CRSR UP on the top row and CRSR DOWN on the bottom one scroll an `M` or
@@ -314,6 +316,7 @@ mixed with the code can make that come out differently.
     W "NAME" [s e]   save the program, as SAVE; with s e: s-e as a PRG
     @[cmd]           the drive's status, or a DOS command
     = n              n in hex, decimal and binary; +n is decimal, %n binary
+    Z n              line 1 a REM of n bytes, for code at 16514
     ?                help
 
 The monitor is loaded from the disk on the first F5 (about 7K). It works
@@ -331,14 +334,17 @@ The classic ZX81 way: a `REM` line at the start of the program holds the
 machine code. Its first byte after the `REM` is at 16514 (`$4082`), and
 `USR 16514` runs it.
 
-Hello world. First the room for it, 23 bytes of `REM`, and a line to run
-it:
+Hello world. First the room for it, 23 bytes (`$17`): F5, and
 
-    1 REM 01234567890123456789012
-    10 RAND USR 16514
+    Z 17
 
-Then F5, and `A` at `$4082`. After each line the monitor offers the next
-address; RETURN on an empty one ends. Then the text, after the code:
+`Z` makes line 1 a `REM` of that many bytes, NOPs and a `RET` last. With
+no program, it adds the line that runs it too, `10 RAND USR 16514`.
+
+Then `A` at `$4082`. After each line the monitor offers the next
+address; RETURN on an empty one ends. Then the text, after the code,
+with `WORLD` inverse: RVS ON (CTRL+9) before it and RVS OFF (CTRL+0)
+after, as on the C64:
 
     A 4082 LD HL,$408D
     LD A,(HL)
@@ -353,7 +359,7 @@ address; RETURN on an empty one ends. Then the text, after the code:
 
 <p align="center">
   <img src="img/shot-asm.png" width="49%" alt="The assembler: each line turned into its address, bytes and instruction, then the text">
-  <img src="img/shot-rem.png" width="49%" alt="LIST: 1 REM, the code as characters and keywords, HELLO WORLD and COPY">
+  <img src="img/shot-rem.png" width="49%" alt="LIST: 1 REM, the code as characters and keywords, HELLO, an inverse WORLD and COPY">
 </p>
 
 `RST $10` is the ZX81's CHROUT: it prints the character in A, keywords
@@ -373,14 +379,28 @@ machine. A line from `D` changed on the screen and entered is assembled
 too.
 
 `X`, then `LIST`: the `REM` now holds the code, shown as ZX81 characters
-and keywords, then `HELLO WORLD`, and the `FF` as `COPY` (the keyword
-with that code). Some of the code is missing: `$7E` marks a number in a
-BASIC line, and `LIST` skips the 5 bytes after it. `RUN` prints `HELLO
-WORLD`. `M 4082 4099` shows all the bytes, and the text:
+and keywords, then `HELLO`, an inverse `WORLD`, and the `FF` as `COPY`
+(the keyword with that code). Some of the code is missing: `$7E` marks a
+number in a BASIC line, and `LIST` skips the 5 bytes after it. `RUN`
+prints the same, `WORLD` inverse. `M 4082 4099` shows all the bytes, and
+the text:
 
 <p align="center">
-  <img src="img/shot-mon-m.png" width="70%" alt="M 4082 4099: the code, then HELLO WORLD and FF">
+  <img src="img/shot-mon-m.png" width="70%" alt="M 4082 4099: the code, then HELLO, an inverse WORLD and FF">
 </p>
+
+Not sure how much room the code will need? Start with some, and `Z`
+again when it runs out: on a line 1 that is a `REM` already, `Z n` makes
+it n bytes, keeping what is in it, with NOPs added at the end or bytes
+cut from it. On a program without a line 1, `Z` puts the `REM` in front
+of it, and adds no `RAND USR` line. A line 1 that isn't a `REM`, or no
+room for it, is `?`. The program moves, so leaving after `Z` goes to
+BASIC as after `L`: report 0, not back to what was running.
+
+The code has to be assembled where it runs, at `$4082` on: `A` uses the
+address it writes to for jumps and calls, so code tried out at `$7000`
+doesn't work from the `REM` unless it only uses relative jumps (`JR`,
+`DJNZ`).
 
 To watch it run, set a breakpoint on the `RST $10`:
 
@@ -454,7 +474,8 @@ and type over `PRINT` on its line.
 
 ### Text in memory
 
-`:` takes text between `'`s, as ZX81 characters, mixed with bytes. A
+`:` takes text between `'`s, as ZX81 characters, mixed with bytes;
+characters typed with RVS ON (CTRL+9) are stored inverse. A
 text that runs to the end of the line needs no closing `'`, and the
 monitor offers the next line to go on with:
 
