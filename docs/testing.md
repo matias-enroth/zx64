@@ -8,7 +8,7 @@ wire, SD2IEC. Emulator: VICE (`x64sc -cpmcart`, 3.7.1 and 3.10).
 `tools/simulate.py` runs the patched ROM and zx64 on a Z80 emulator and
 the 6510 loader on a 6502 emulator, switching as the cartridge does,
 with a fake VIC, CIA, colour RAM, kernal and drive. It types and reads
-the screen. 115 checks, with and without `/INT`, covering:
+the screen. 116 checks, with and without `/INT`, covering:
 
 - boot, typing, type-ahead and F1 (TEST typed fast: no ghost F), the
   cursor keys, F2/F3/F5/F7; no cartridge: a message and back to BASIC
@@ -100,6 +100,7 @@ Not yet tried there:
       characters stored as they show, reversed or not; `:` text with RVS ON
 - [ ] `Z 10` with no program, `Z 17` growing it, the hello world with an
       inverse `WORLD`; `Z` before a program without a line 1; `X` after `Z`
+- [ ] CTRL+HOME in the monitor: the bottom row
 
 ## pcheck on real programs
 

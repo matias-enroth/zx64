@@ -28,7 +28,8 @@
 ;   = n            n in hex, decimal and binary (+n decimal, %n binary)
 ;   ?              help
 ; The screen is edited as on a C64: the cursor keys, INST/DEL, CLR/HOME,
-; RVS ON and OFF (CTRL+9, CTRL+0), and RETURN takes the line the cursor
+; CTRL+HOME (the bottom row), RVS ON and OFF (CTRL+9, CTRL+0), and RETURN
+; takes the line the cursor
 ; is on. CRSR UP/DOWN at the top and
 ; bottom scroll an M or D listing (sc_up, sc_dn). RUN/STOP stops a long
 ; listing. F5 or X goes back to the ZX81.
@@ -68,6 +69,7 @@ TEXTCOL:  equ 14
 K_RETURN: equ 13                ; key codes, as PETSCII
 K_RVSON: equ 18
 K_RVSOFF: equ 146
+K_BOTTOM: equ 4                 ; CTRL+HOME (no PETSCII of its own)
 K_DOWN:  equ 17
 K_HOME:  equ 19
 K_DEL:   equ 20
@@ -602,7 +604,7 @@ gk_tab: add hl,de
         or a
         jp z,getkey             ; no key of ours
         ld e,a
-        ld a,(kmat+7)           ; CTRL (column 7, row 2): 9 is RVS ON, 0 RVS OFF
+        ld a,(kmat+7)           ; CTRL (column 7, row 2): 9 is RVS ON, 0 RVS OFF,
         and 4
         ld a,e
         jr nz,gk_ret
@@ -612,6 +614,10 @@ gk_tab: add hl,de
         ld a,e
         cp '0'
         ld a,K_RVSOFF
+        jr z,gk_ret
+        ld a,e                  ; HOME the bottom row
+        cp K_HOME
+        ld a,K_BOTTOM
         jr z,gk_ret
         ld a,e
 gk_ret: push af
@@ -682,6 +688,8 @@ gl_key: call getkey
         jr z,crup
         cp K_HOME
         jr z,home
+        cp K_BOTTOM
+        jr z,bottom
         cp K_CLR
         jp z,cls
         cp K_DEL
@@ -738,8 +746,11 @@ crup:   ld a,(crow)
         dec a
         ld (crow),a
         ret
+bottom: ld a,24
+        jr hm1
 home:   xor a
-        ld (crow),a
+hm1:    ld (crow),a
+        xor a
         ld (ccol),a
         ret
 delch:  ld a,(ccol)             ; the character left of the cursor out,
@@ -1466,8 +1477,6 @@ zm_dn:  inc hl                  ; back: from the first byte up
         and a
         ret
 
-zline10: db $00,$0A,$0E,$00,$F9,$D4  ; 10 RAND USR 16514
-        db $1D,$22,$21,$1D,$20,$7E,$8F,$01,$04,$00,$00,$76
 
 ; R: the registers, as lines that ";" and "'" take back.
 cmd_r:  call r_main
@@ -3740,6 +3749,9 @@ pb1:    ld a,'0'
         call pch
         djnz pb1
         ret
+
+zline10: db $00,$0A,$0E,$00,$F9,$D4  ; Z's 10 RAND USR 16514 (part 1 is full)
+        db $1D,$22,$21,$1D,$20,$7E,$8F,$01,$04,$00,$00,$76
 
 monend:
 

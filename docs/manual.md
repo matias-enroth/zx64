@@ -282,7 +282,8 @@ learn.
 </p>
 
 The screen works as a C64's: move the cursor anywhere, change what is
-there, press RETURN to enter that line. A memory line from `M` or a
+there, press RETURN to enter that line. HOME goes to the top row,
+CTRL+HOME to the bottom one. A memory line from `M` or a
 disassembly line from `D` can be edited in place and entered again; on
 an `M` line, the hex or the characters (`PRINT` to `PRONT`). The
 characters are stored as they show: a reversed one as the inverse

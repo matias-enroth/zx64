@@ -1156,6 +1156,14 @@ def main():
     col = bytes(m.z.memory[0xC800:0xC800 + 1000])
     check("the monitor's colours: every cell light blue (14), however colour RAM reads",
           all(c & 15 == 14 for c in col), f"{sum(1 for c in col if c & 15 != 14)} cells wrong")
+    m.mkey("CTRL", "HOME")
+    m.mtype("Q", settle=0)
+    m.mkey("HOME")
+    m.mtype("W", settle=0)
+    scr = m.mscreen()
+    m.mkey("HOME", "LSHIFT")                     # CLR
+    check("CTRL+HOME: the bottom row, column 0; HOME: the top", scr[24] == "Q" and scr[0].startswith("W"),
+          f"{scr[0]!r} {scr[24]!r}")
     m.mtype("F 7000 700F AA\r")
     m.mtype(":7000 01 02 03\r")
     m.mtype("M 7000 7008\r")
