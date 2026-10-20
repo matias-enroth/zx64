@@ -91,16 +91,20 @@ Done after 1.0 (2026-10-18):
 - [x] RETURN on an `M` line: the line drawn again (then, a changed
       character over an inverse one stayed inverse; no longer so)
 
+Done after 1.0 (2026-10-19):
+
+- [x] An `M` line's characters stored as they show, reversed or not
+- [x] RVS ON (CTRL+9) and OFF (CTRL+0) in the monitor
+- [x] `Z`: line 1's `REM` made and resized
+- [x] CTRL+HOME in the monitor: the bottom row
+
 Not yet tried there:
 
 - [ ] The manual's hello world, both ways, and its breakpoint on `RST $10`
 - [ ] `W "HELLO"` in the monitor, `X` to BASIC after `L`; `L` and `LOAD`
       of a PRG of code: refused
-- [ ] RVS ON (CTRL+9) and OFF (CTRL+0) in the monitor; an `M` line's
-      characters stored as they show, reversed or not; `:` text with RVS ON
-- [ ] `Z 10` with no program, `Z 17` growing it, the hello world with an
-      inverse `WORLD`; `Z` before a program without a line 1; `X` after `Z`
-- [ ] CTRL+HOME in the monitor: the bottom row
+- [ ] The hello world with `Z 17` and an inverse `WORLD`; `Z` before a
+      program without a line 1
 
 ## pcheck on real programs
 
