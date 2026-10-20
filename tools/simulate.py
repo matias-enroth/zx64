@@ -1408,6 +1408,34 @@ def main():
     m.mtype("DEC A\r", settle=60)
     check("A at the keyboard: the line becomes D's, .A next is offered; a D line changed, RETURN: assembled",
           a_ok and m.z.memory[0x7002] == 0x3D, f"{a_ok} {bytes(m.z.memory[0x7000:0x7003]).hex()}")
+    m.mtype("A 7010\r", settle=60)
+    scr = m.mscreen()
+    alone = scr[max(i for i, r in enumerate(scr) if r == "A 7010") + 1]
+    m.mtype("NOP\r", settle=60)                 # typed on the offered ".A 7010 "
+    m.mtype("\r", settle=60)                     # RETURN on ".A 7011 ": the end
+    scr = m.mscreen()
+    i = max(i for i, r in enumerate(scr) if r.startswith(".,7010"))
+    check("A a alone: .A a offered; an instruction there assembled, .A next offered; RETURN on it: the end",
+          alone == ".A 7010" and m.z.memory[0x7010] == 0 and scr[i + 1:i + 4] == [".A 7011", ".", ""],
+          f"{alone!r} {scr[i:i + 4]}")
+    m.mtype(":7020 3E 42 3C 3C\r")
+    def dedit(up, text):                         # D 7020 7023, up onto a line, its text
+        m.mtype("D 7020 7023\r", settle=60)      # typed over, RETURN: the row after it
+        for _ in range(up):
+            m.mkey("CRSRDOWN", "LSHIFT")
+        for _ in range(18):
+            m.mkey("CRSRRIGHT")
+        m.mtype(text + "\r", settle=60)
+        row = m.z.memory[mlb["crow"]]
+        return m.mscreen()[row]
+    same = dedit(3, "LD A,$43")                  # as long: the next D line stays
+    longer = dedit(3, "RST $10 ")                # 2 bytes to 1: .A 7021 offered
+    m.mtype("INC A\r", settle=60)
+    check("a D line changed to an instruction as long: the next line left; to a shorter one: .A next "
+          "offered, as A does",
+          same.startswith(".,7022 3C") and longer == ".A 7021"
+          and bytes(m.z.memory[0x7020:0x7023]) == bytes.fromhex("D73C3C"),
+          f"{same!r} {longer!r} {bytes(m.z.memory[0x7020:0x7024]).hex()}")
 
     # the disk: $, W, L, @. last(n): the n lines above the cursor
     def last(n):

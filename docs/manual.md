@@ -343,7 +343,8 @@ Hello world. First the room for it, 23 bytes (`$17`): F5, and
 no program, it adds the line that runs it too, `10 RAND USR 16514`.
 
 Then `A` at `$4082`. After each line the monitor offers the next
-address; RETURN on an empty one ends. Then the text, after the code,
+address; RETURN on an empty one ends (`A 4082` alone offers the first).
+Then the text, after the code,
 with `WORLD` inverse: RVS ON (CTRL+9) before it and RVS OFF (CTRL+0)
 after, as on the C64:
 
@@ -377,7 +378,9 @@ works by search: it tries encodings, disassembles each, and keeps the
 one that reads as your text, so whatever `D` prints, `A` takes back.
 That's up to about a second for the rarest instructions on the real
 machine. A line from `D` changed on the screen and entered is assembled
-too.
+too. If the new instruction is shorter or longer than the old one, the
+`D` line under it is no longer the next instruction, so the next address
+is offered instead, as `A` does.
 
 `X`, then `LIST`: the `REM` now holds the code, shown as ZX81 characters
 and keywords, then `HELLO`, an inverse `WORLD`, and the `FF` as `COPY`

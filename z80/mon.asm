@@ -3001,8 +3001,10 @@ sa2:    ld a,(sbn)
 
 ; ---------------------------------------------------------------- A
 ; A a text: the instruction assembled at a; its line becomes D's, and
-; ".A next " waits for the next (nothing more: the end). A D line
-; (".,") changed and RETURN: the same, in place. Numbers in hex, with
+; ".A next " waits for the next (nothing more: the end; A a alone offers
+; ".A a "). A D line (".,") changed and RETURN: the same, in place; if
+; the instruction's length changed, ".A next " too, since the line
+; after it no longer is the next instruction. Numbers in hex, with
 ; "$" or a leading digit ($FF, 0FF: DE or C could be registers).
 ; Assembling is searching: every encoding is disassembled, with zeros
 ; for its numbers, until one reads as the text does (both normalized,
@@ -3011,10 +3013,10 @@ sa2:    ld a,(sbn)
 ; shows. With IX or IY in the text only those encodings are tried.
 cmd_a:  ld hl,(lptr)
         call needw
-        ld (aaddr),de
         call skipsp
         or a
-        ret z                   ; no instruction: the end
+        jr z,a_none
+        ld (aaddr),de
         ld (atext),hl
         call asm1
         jr c,a_err
@@ -3027,6 +3029,12 @@ a_next: call lstart             ; the next one's prompt
         call phex4
         call sp1
         jp quietly
+a_none: ld hl,(aaddr)            ; no instruction: on the line offered (a
+        sbc hl,de               ; at aaddr), the end; else it is offered
+        ld (aaddr),hl           ; (0: nothing offered now)
+        ret z
+        ld (dnext),de
+        jr a_next
 a_err:  call lstart
         ld a,'?'
         call pch
@@ -3048,10 +3056,21 @@ cm_typed:
         or a
         jp z,quietly
         ld (atext),hl
+        ld hl,linebuf
+        call dcount
+        push bc                 ; B: its bytes before
         call asm1
         jp c,err
         call a_show
-        jp quietly
+        pop bc
+        ld hl,(dnext)
+        ld de,(aaddr)
+        and a
+        sbc hl,de
+        ld a,l
+        cp b
+        jp z,quietly            ; as long as before: the next line still is
+        jr a_next
 
 a_show: ld hl,crow              ; the line typed (above the cursor) as D's
         dec (hl)
