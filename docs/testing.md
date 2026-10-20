@@ -98,13 +98,16 @@ Done after 1.0 (2026-10-19):
 - [x] `Z`: line 1's `REM` made and resized
 - [x] CTRL+HOME in the monitor: the bottom row
 
+Done after 1.0 (2026-10-20):
+
+- [x] `W "HELLO"` in the monitor, `X` to BASIC after `L`; `L` and `LOAD`
+      of a PRG of code: refused
+- [x] The hello world with `Z 17` and an inverse `WORLD`; `Z` before a
+      program without a line 1
+
 Not yet tried there:
 
 - [ ] The manual's hello world, both ways, and its breakpoint on `RST $10`
-- [ ] `W "HELLO"` in the monitor, `X` to BASIC after `L`; `L` and `LOAD`
-      of a PRG of code: refused
-- [ ] The hello world with `Z 17` and an inverse `WORLD`; `Z` before a
-      program without a line 1
 - [ ] `A 7000` alone: `.A 7000` offered; a `D` line changed to an
       instruction of another length: the next address offered
 
