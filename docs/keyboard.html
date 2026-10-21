@@ -197,6 +197,7 @@ footer{color:var(--muted);font-size:13px;max-width:72ch}
       <tr><td><kbd>F2</kbd></td><td>(SHIFT+F1) The colours: black on white, white on black, green screen, amber, black on green, the C64's own. The top row names each; F7, F3 and the monitor keep it</td></tr>
       <tr><td><kbd>F3</kbd></td><td>Memory: 16K, 32K, 1K, 16K again. Like swapping the RAM pack with the power off: the ZX81 starts again and the program is gone. The top row says the size</td></tr>
       <tr><td><kbd>F5</kbd></td><td>The machine code monitor: stops the ZX81 where it is and shows its registers, on a C64 screen of its own. F5 again, or X, carries on</td></tr>
+      <tr><td><kbd>F6</kbd></td><td>(SHIFT+F5) The joystick in port 2: 5678+0 or your own keys, shown on the top row. Held a second: the ZX81 stops and asks for your own keys, up, down, left, right, fire (F1: none, F5: give up)</td></tr>
       <tr><td><kbd>F7</kbd></td><td>Reset: the ZX81 starts again, as at power on, when the key comes up. Works at the prompt, in SLOW mode, and between BASIC statements in FAST mode</td></tr>
     </tbody>
   </table></div>
@@ -256,7 +257,7 @@ const K = {"Z":{"sh":":","kw":"COPY","fn":"LN"},
 const rows = [
   [{c:'←',x:'← left'},'1','2','3','4','5','6','7','8','9','0',{c:'+'},{c:'-'},{c:'£'},{c:'CLR HOME'},{c:'INST DEL',x:'RUBOUT'},{c:'F1',x:'TYPE-AHEAD',sub:'⇧ COLOURS',f:1,w:1.5}],
   [{c:'CTRL',w:1.5},'Q','W','E','R','T','Y','U','I','O','P',{c:'@'},{c:'*'},{c:'↑',x:'↑ up'},{c:'RESTORE',w:1.5},{c:'F3',x:'RAM SIZE',f:1,w:1.5}],
-  [{c:'RUN STOP',x:'BREAK',w:1.25},{c:'SHIFT LOCK',x:'SHIFT lock'},'A','S','D','F','G','H','J','K','L',{c:':'},{c:';'},{c:'='},{z:'NEWLINE',c:'RETURN',w:1.75},{c:'F5',x:'MONITOR',f:1,w:1.5}],
+  [{c:'RUN STOP',x:'BREAK',w:1.25},{c:'SHIFT LOCK',x:'SHIFT lock'},'A','S','D','F','G','H','J','K','L',{c:':'},{c:';'},{c:'='},{z:'NEWLINE',c:'RETURN',w:1.75},{c:'F5',x:'MONITOR',sub:'⇧ JOYSTICK',f:1,w:1.5}],
   [{c:'C='},{c:'SHIFT',x:'SHIFT',w:1.75},'Z','X','C','V','B','N','M',{c:','},'.',{c:'/'},{c:'SHIFT',x:'SHIFT',w:1.25},{c:'CRSR ⇕',x:'↓ ⇧↑'},{c:'CRSR ⇔',x:'→ ⇧←'},{c:'F7',x:'RESET',f:1,w:1.5}],
   [{z:'SPACE',c:'also BREAK',w:9}]
 ];

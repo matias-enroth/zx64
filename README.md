@@ -36,12 +36,14 @@ On the C64: `LOAD "ZX81",8`, `RUN`. Then `LOAD "MAZOGS"`, as from tape.
 - Type-ahead and the ZX81's layout on the C64 keyboard
   ([overlay](docs/img/keyboard.png), [to print](docs/keyboard.pdf)); F2 colour schemes; F7 reset, which
   repairs the ROM if a program wrote over it.
+- A joystick in port 2 as ZX81 keys: 5678+0, or a game's own keys,
+  taught by holding F6 and switched with it.
 - zx64mon on F5: memory, disassembler, assembler, breakpoints, single
   step, disk and DOS commands, in any running program.
 - `tools/pcheck.py`: warns about games that won't work, as they go on
   the disk.
 - `make test`: both CPUs in emulators, with the real hardware's quirks
-  modelled; 108 checks.
+  modelled; 148 checks.
 
 Not possible: hi-res, WRX and other display tricks.
 

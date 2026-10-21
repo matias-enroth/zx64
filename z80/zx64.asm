@@ -55,6 +55,16 @@ CARTSW:  equ $CE00
 SCREEN:  equ $D000              ; C64 $E000, RAM under the kernal
 
 KPAGE:   equ $2E00              ; ZX81 keyboard rows, KPAGE + row select
+                                ; The rest of its page: buffers whose contents
+                                ; don't matter at the start
+cmat:    equ KPAGE              ; C64 matrix, one byte a column: page aligned
+                                ; (scan counts columns in its low byte)
+kq:      equ KPAGE+$10          ; the type-ahead queue, 16 slots of 2 bytes
+bptab:   equ KPAGE+$30          ; the monitor's breakpoints: 6 x (address, the
+                                ; byte it replaced)
+MSGBUF:  equ KPAGE+$44          ; the message on the top row (show), 32 bytes
+JMSG:    equ KPAGE+$80          ; the joystick's message (joyshow), 32 bytes
+JTEACH:  equ KPAGE+$A0          ; the layout being taught (teach), 10 bytes
 MBOX:    equ $2F00              ; +0 command, +1 status, +2 name length, +3 name,
                                 ; +$20 SP when the 6510 takes over
 CMD_LOAD: equ 1
@@ -181,12 +191,16 @@ ldi8:   macro
         ldi
         endm
 
-; A message for a setting (32 ZX81 characters at HL, from msgs.inc) on
-; the top row for 2 seconds, over the ZX81's picture: each copy of the
-; picture puts it back right after copying the top row (ovl_top), while
-; the VIC is still in the bottom border (after the whole copy would be
-; too late: the VIC would already be drawing the top row).
-show:   ld (ovl_msg),hl
+; A message for a setting (HL, from msgs.inc) on the top row for 2
+; seconds, over the ZX81's picture: each copy of the picture puts it back
+; right after copying the top row (ovl_top), while the VIC is still in the
+; bottom border (after the whole copy would be too late: the VIC would
+; already be drawing the top row). showb: HL is 32 characters already.
+show:   ld de,MSGBUF
+        push de
+        call msgx
+        pop hl
+showb:  ld (ovl_msg),hl
         ld a,100
         ld (ovl),a
 ovl_put:
@@ -195,6 +209,53 @@ ovl_put:
         ld bc,32
         ldir
         ret
+
+; HL: a message, kept short in msgs.inc: its text, then its key, each
+; after its length (ZX81 codes, inverse). DE: 32 characters as the top row
+; shows it, " text ...  key ", the key ending a column before the right
+; edge. HL: after the message. DE must not cross a page boundary.
+msgx:   push de
+        ld b,32
+mx_sp:  ld a,$80                ; inverse spaces
+        ld (de),a
+        inc de
+        djnz mx_sp
+        pop de
+        push de
+        inc de
+        call mx_cp              ; the text from column 1
+        pop de
+        ld a,(hl)               ; the key, F and its digit, at column 29
+        or a                    ; (0: none)
+        ret z
+        ex de,hl
+        ld c,29                 ; (B is 0: djnz, or mx_cp's LDIR)
+        add hl,bc
+        ld (hl),$AB             ; F, inverse
+        inc hl
+        ld (hl),a
+        ret
+mx_cp:  ld a,(hl)
+        inc hl
+        or a
+        ret z
+        ld c,a
+        ld b,0
+        ldir
+        ret
+
+; HL: a message, A: n. HL: the message n after it.
+msgn:   ld b,a
+        inc b
+mn_n:   dec b
+        ret z
+        ld a,(hl)               ; its text's length, the text, its key
+        add a,2
+        add a,l
+        ld l,a
+        jr nc,mn_n
+        inc h
+        jr mn_n
 
 ovl_top:                        ; the top row is copied: the message over it
         push af
@@ -535,8 +596,7 @@ kq_key: push hl
         push de
         push bc
         ld b,a
-        ld a,(KPAGE+$FE)
-        rra                     ; carry: SHIFT up
+        call kshift             ; carry: SHIFT up
         ld a,b
         cpl
         rla
@@ -566,6 +626,39 @@ kk_done:
         pop de
         pop hl
         ret
+
+; kq_key's SHIFT for the key B (its bit) in row E: a C64 SHIFT, or the
+; key's own C64 key if that gives it with SHIFT (DEL: SHIFT 0). Not the
+; ZX81's SHIFT line: DEL still down as G went down gave LLIST. Carry:
+; SHIFT up. Keeps B, E.
+kshift: ld a,(KPAGE+$FE)
+        rra
+        ret c                   ; the ZX81's SHIFT up: none
+        call shifted            ; Z, and carry clear (its AND): a C64
+        ret z                   ; SHIFT down
+        ld hl,kshtab            ; (ZX81 row, its key, cmat column, its row)
+ks_ent: ld a,(hl)               ; 0: the end
+        or a
+        scf
+        ret z
+        inc hl
+        cp e
+        ld a,(hl)
+        inc hl
+        ld c,(hl)
+        inc hl
+        jr nz,ks_nx             ; (cp's flags)
+        and b
+        jr z,ks_nx
+        push de
+        ld e,c
+        ld d,cmat/256
+        ld a,(de)
+        pop de
+        and (hl)                ; 0: down, carry clear
+        ret z
+ks_nx:  inc hl
+        jr ks_ent
 
 ; The next key from the queue: NZ and HL, or Z if there is none.
 kq_pop: ld a,(kq_out)
@@ -608,11 +701,24 @@ scan:   ld a,$FF
         ld (KPAGE+$DF),a
         ld (KPAGE+$BF),a
         ld (KPAGE+$7F),a
+        ld a,(CIA1)             ; the stick in port 2: one read will do
+        ld hl,jnow              ; while it and the last scan say idle
+        and (hl)                ; (a wrong read, or a column still
+        ld c,a                  ; selected, only costs the three reads)
+        inc a                   ; C: $FF, the stick left out
+        jr z,sc_kb
+        call jread              ; or three reads: jnow
+        ld (jnow),a
+sc_kb:
         xor a
         ld (CIA1),a             ; all columns
         ld a,(CIA1+1)
-        cp $FF                  ; Z: nothing down
-        jp z,sc_none
+        cp $FF                  ; Z: no key down
+        jr nz,sc_keys
+        inc c
+        jp z,sc_none            ; nothing at all
+        jp sc_stick
+sc_keys:
         ld hl,cmat
         ld b,$FE
 sc_col: ld a,b
@@ -621,6 +727,12 @@ sc_col: ld a,b
         inc l
         rlc b
         jr c,sc_col             ; carry until the 0 has gone round
+        ld a,(jnow)
+        inc a
+        call nz,jghost          ; the stick held: its ghosts out
+        ld a,(teaching)         ; teaching: the F-keys are its own
+        or a
+        jp nz,f5_done
         ld a,(cmat)             ; F7 (column 0, row 3): reset the ZX81
         and $08
         jr nz,sc_f3
@@ -659,17 +771,44 @@ f1_show:
 f1_up:  ld (hl),0
 f1_done:
         ld a,(cmat)             ; F5 (column 0, row 6), as it goes down:
-        and $40                 ; the monitor, at the next chance (monreq)
-        ld hl,f5down
-        jr nz,f5_up
+        and $40                 ; the monitor, at the next chance (monreq).
+        ld hl,f5down            ; With SHIFT it is F6: the next joystick
+        jr nz,f5_up             ; layout, and held a second, teaching one
         or (hl)
-        jr nz,f5_done
+        jr nz,f5_held
         ld c,$40
         call held
         jr nz,f5_done
         inc (hl)
-        ld a,1
+        call shifted
+        jr z,f6_down
+        xor a
+        ld (f6on),a
+        inc a
         ld (monreq),a
+        jr f5_done
+f6_down:
+        ld a,(joyidx)           ; (put back if teaching is given up)
+        ld (f6old),a
+        call joynext
+        ld a,(tick)
+        ld (f6t0),a
+        ld a,1
+        ld (f6on),a
+        jr f5_done
+f5_held:
+        ld a,(f6on)             ; F6 still down: a second of it?
+        dec a
+        jr nz,f5_done
+        ld a,(f6t0)
+        ld b,a
+        ld a,(tick)
+        sub b
+        cp 50
+        jr c,f5_done
+        ld a,2
+        ld (f6on),a
+        ld (monreq),a           ; teaching, at the next chance (mon_go)
         jr f5_done
 f5_up:  ld (hl),0
 f5_done:
@@ -731,7 +870,26 @@ cr_up:  bit 7,a
         set 4,(hl)              ; not 6 (down)...
         res 3,(hl)              ; ...but 7 (up)
 cr_done:
+        ld a,(cmat)             ; F5 or F6 down: no SHIFT for the program
+        and $40
+        jr nz,cr_stick
+        ld hl,KPAGE+$FE
+        set 0,(hl)
+cr_stick:
+        ld a,(jnow)             ; the stick's keys too, unless it was
+        ld hl,jprev             ; idle then and now
+        and (hl)
+        inc a
+        call nz,jmerge
         or 1                    ; NZ: something is down
+        jr sc_done
+sc_stick:                       ; the stick, no key
+        call jmerge
+        xor a
+        ld (f1down),a
+        ld (f5down),a
+        ld a,(jnow)
+        inc a                   ; Z: let go just now, nothing is down
         jr sc_done
 sc_none:
         xor a                   ; Z: nothing down
@@ -758,7 +916,7 @@ cread:  ld (CIA1),a
         ld c,a
         ld a,(CIA1+1)
         ld d,a
-        and c                   ; (b & c) | (b & d) | (c & d)
+cr_maj: and c                   ; (b & c) | (b & d) | (c & d)
         ld e,a
         ld a,b
         and c
@@ -769,6 +927,387 @@ cread:  ld (CIA1),a
         or e
         pop de
         pop bc
+        ret
+
+; ---------------------------------------------------------------- joystick
+; The stick in port 2 as ZX81 keys. A layout is five (row select, AND
+; mask) pairs, for up, down, left, right and fire, the order of $DC00's
+; bits 0-4; none is mask $FF. scan puts every key the stick holds into
+; the rows, so the IN A,($FE) copies (mirror) get them all. KEYBOARD
+; (LAST_K, INKEY$) gets one, the one pressed last: the ROM takes two keys
+; down as no key, so a diagonal would stop a game. jone takes the others
+; out again after mirror.
+
+; The stick, three reads (see cread): bits 0-4, 0 pressed, 5-7 set.
+; Keeps BC, DE, HL.
+jread:  ld a,$FF
+        ld (CIA1),a             ; no column: port A reads only the stick
+        push bc
+        push de
+        ld a,(CIA1)
+        or $E0
+        ld b,a
+        ld a,(CIA1)
+        ld c,a
+        ld a,(CIA1)
+        ld d,a
+        jr cr_maj               ; (it pops DE and BC)
+
+; jnow into the rows: every key the stick holds, and jlast (the newest)
+; for jone, leaving out directions the layout has no key for. jmulti:
+; more than one is down. jprev: what was down, so left out.
+jmerge: ld a,(teaching)         ; teaching takes keys, not the stick: it
+        or a                    ; is up for scan too
+        jr nz,jm_tch
+        call joylay             ; HL: the layout
+        ld a,(jnow)
+        ld c,a                  ; C: the stick, shifted out bit by bit
+        ld b,$FF                ; B: what is down, shifted in
+        ld d,5
+jm_ent: ld e,(hl)               ; its row select
+        inc hl
+        ld a,(hl)               ; its mask
+        inc hl
+        rr c
+        jr c,jm_rot             ; not pressed
+        push hl
+        ld l,e
+        ld h,KPAGE/256
+        ld e,a
+        and (hl)
+        ld (hl),a
+        pop hl
+        ld a,e
+        add a,1                 ; carry: no key ($FF), as if not pressed
+jm_rot: rr b
+        dec d
+        jr nz,jm_ent
+        ld a,b                  ; bits 3-7 to 0-4
+        rrca
+        rrca
+        rrca
+        ld b,a
+        cpl
+        and $1F
+        ld e,a
+        dec a
+        and e                   ; NZ: two or more down
+        ld (jmulti),a
+        ld a,(jprev)
+        ld c,a                  ; C: at the last scan
+        ld a,b
+        ld (jprev),a
+        cpl
+        and c                   ; pressed now, up before: new
+        and $1F
+        jr nz,jm_low            ; the newest is KEYBOARD's
+        ld a,(jlast)
+        cp 5
+        jr nc,jm_any
+        ld e,a                  ; still down? Then it stays
+        inc e
+        ld a,b
+jm_bit: rrca
+        dec e
+        jr nz,jm_bit
+        ret nc
+jm_any: ld a,b                  ; let go: the lowest still down
+        cpl
+        and $1F
+        jr nz,jm_low
+        dec a                   ; none
+        ld (jlast),a
+        ret
+jm_low: ld e,0                  ; A: entries (bit set), the lowest
+jm_n:   rrca
+        jr c,jm_one
+        inc e
+        jr jm_n
+jm_one: ld a,e
+        ld (jlast),a
+        ret
+jm_tch: ld a,$FF
+        ld (jnow),a
+        ret
+
+; After mirror: the stick's keys other than jlast out of the rows again,
+; for KEYBOARD. (A key also held on the keyboard goes with them.)
+jone:   call joylay
+        ld a,(jprev)
+        ld c,a
+        ld a,(jlast)
+        ld e,a
+        ld d,0
+jo_ent: rr c
+        jr c,jo_next
+        ld a,d
+        cp e
+        jr z,jo_next
+        push hl
+        ld a,(hl)
+        inc hl
+        ld b,(hl)
+        ld l,a
+        ld h,KPAGE/256
+        ld a,b
+        cpl
+        or (hl)
+        ld (hl),a
+        pop hl
+jo_next:
+        inc hl
+        inc hl
+        inc d
+        ld a,d
+        cp 5
+        jr nz,jo_ent
+        ret
+
+; F6: the other layout, 5678+0 or the taught one if there is one, shown
+; on the top row by its keys.
+joynext:
+        ld a,(joyhave)
+        or a
+        jr z,jn_set             ; none taught: 5678+0 (A = 0)
+        ld a,(joyidx)
+        xor 1
+jn_set: ld (joyidx),a
+joyshow:
+        call joylay
+        call jcomp
+jshow:  ld hl,JMSG
+        jp showb
+jcomp:  push hl                 ; HL: a layout. JMSG: msg_joy with its keys
+        ld hl,msg_joy
+        ld de,JMSG
+        call msgx
+        pop hl
+        ld de,JMSG+12
+        ld b,5
+js_key: push bc
+        ld a,(hl)
+        inc hl
+        ld c,(hl)
+        inc hl
+        push hl
+        push de
+        call keyc
+        pop de
+        ld (de),a
+        inc de
+        inc de
+        inc de
+        pop hl
+        pop bc
+        djnz js_key
+        ret
+
+; Hold F6 (from mon_go, interrupts off, the program frozen): the top row
+; asks for each of the stick's keys in turn, the layout so far with a ? at
+; the one asked. The first key down other than SHIFT is the answer (a C64
+; cursor key: its key without SHIFT), or SHIFT alone; F1: none; F5: give
+; up, the layout as before F6. Taken once all keys are up again.
+teach:  ld a,1
+        ld (teaching),a
+        ld hl,JTEACH            ; all none to start with
+        ld b,5
+tc_clr: ld (hl),$FE
+        inc hl
+        ld (hl),$FF
+        inc hl
+        djnz tc_clr
+        ld de,JTEACH            ; DE: the key asked for
+tc_ask: push de
+        ld hl,JTEACH
+        call jcomp
+        pop de
+        ld a,e                  ; the ? at JMSG + 12 + 3 * its number
+        sub JTEACH&$FF
+        ld l,a
+        rra
+        add a,l
+        add a,(JMSG&$FF)+12
+        ld l,a
+        ld h,JMSG/256
+        ld (hl),$8F             ; an inverse ?
+        push de
+        call jshow
+        pop de
+        ld b,0                  ; B: 0 nothing yet, 1 SHIFT, 2 a key
+tc_up:  call tkeys
+        jr nz,tc_up             ; all keys up first
+tc_wait:
+        call tkeys
+        jr nz,tc_dn
+        ld a,b                  ; all up again: answered?
+        or a
+        jr z,tc_wait
+        inc de
+        inc de
+        ld a,e
+        cp (JTEACH+10)&$FF
+        jr nz,tc_ask
+        ld hl,JTEACH            ; all five: the custom layout
+        ld de,joycus
+        ld bc,10
+        ldir
+        ld a,1
+        ld (joyidx),a
+        ld (joyhave),a
+        jr tc_end
+tc_dn:  ld a,(cmat)
+        bit 6,a
+        jr z,tc_out             ; F5
+        ld l,$FE
+        bit 4,a
+        ld a,$FF                ; F1: none
+        jr z,tc_two
+        ld a,b
+        cp 2
+        jr z,tc_wait            ; answered already
+        ld h,KPAGE/256          ; the first row with a key down
+        ld c,8
+tc_row: ld a,(hl)
+        bit 0,l
+        jr nz,tc_r1
+        or 1                    ; (SHIFT doesn't count here)
+tc_r1:  or $E0
+        inc a
+        jr nz,tc_key
+        rlc l
+        dec c
+        jr nz,tc_row
+        ld a,b                  ; none: SHIFT alone?
+        or a
+        jr nz,tc_wait
+        ld a,(KPAGE+$FE)
+        rra
+        jr c,tc_wait
+        ld l,$FE
+        ld a,l
+        ld b,1
+        jr tc_put
+tc_key: dec a                   ; the row: its lowest key
+        ld c,$FE
+tc_bit: rra
+        jr nc,tc_m
+        rlc c
+        jr tc_bit
+tc_m:   ld a,c
+tc_two: ld b,2
+tc_put: ex de,hl
+        ld (hl),e
+        inc hl
+        ld (hl),a
+        dec hl
+        ex de,hl
+        jr tc_wait
+tc_out: ld a,(f6old)
+        ld (joyidx),a
+tc_end: call tkeys
+        jr nz,tc_end            ; until every key is up
+        xor a
+        ld (teaching),a
+        ld (f6on),a
+        call mirror             ; the IN A,($FE) copies all up too
+        jp joyshow
+
+; The next frame (the raster flag, polled: interrupts are off), then the
+; keys: scan's Z if none is down. Keeps B, DE.
+tkeys:  ld a,(VIC+$19)
+        rra
+        jr nc,tkeys
+        call notbad             ; (see notbad)
+        jr c,tkeys
+        ld a,1
+        ld (VIC+$19),a
+        push bc
+        push de
+        call scan
+        pop de
+        pop bc
+        ret
+
+
+; A = a row select, C = an AND mask: the key's character (keychr).
+keyc:   ld hl,keychr-5
+        ld de,5
+kc_row: add hl,de               ; 5 a row: down to the row's 0 bit
+        rrca
+        jr c,kc_row
+        ld a,c
+        inc a
+        ld a,c
+        jr nz,kc_bit
+        ld a,(keychr+40)        ; mask $FF: none
+        ret
+kc_bit: rrca                    ; then along to the key's 0 bit
+        jr nc,kc_got
+        inc hl
+        jr kc_bit
+kc_got: ld a,(hl)
+        ret
+
+; The stick holds column lines low, so a key down in one of its columns
+; shows in every column read, as on any C64: F1 with the stick up would
+; be F2 as well, 0 with fire F7. Rows down with no column selected are
+; such ghosts: out of every column but the stick's own. (A key really down
+; in such a row elsewhere is lost while the stick is held.)
+jghost: ld a,$FF
+        call cread
+        cpl                     ; 1: a ghost row
+        ret z
+        ld c,a
+        ld a,(jnow)
+        ld b,a
+        cp $FE                  ; column 0 keeps its rows only with up
+        jr z,jg_go              ; alone: with another line held, a key
+        set 0,b                 ; there would read as an F-key
+jg_go:  ld hl,cmat
+jg_col: rr b                    ; carry: not one of the stick's columns
+        jr nc,jg_next
+        ld a,(hl)
+        or c
+        ld (hl),a
+jg_next:
+        inc l
+        bit 3,l
+        jr z,jg_col
+        ret
+
+; The same for BREAK-1's reads, A: column 0's (bg0) or 7's (bg7) with
+; something down in it. Keeps BC, DE, HL.
+bg0:    push de
+        ld e,$FE
+        jr bg_go
+bg7:    push de
+        ld e,$7F
+bg_go:  push bc
+        ld c,a
+        ld a,$FF
+        call cread
+        cpl
+        ld b,a                  ; B: the ghost rows
+        ld a,e                  ; the column again: a row is down only if
+        call cread              ; down in both, as a key let go between the
+        or c                    ; reads leaves its ghost in the first but
+        ld c,a                  ; not in B (fire held, M let go: BREAK)
+        call jread              ; the stick (0: a column it holds)
+        cp e
+        ld a,c
+        jr z,bg_done            ; it holds this one alone: these are real
+        or b
+bg_done:
+        pop bc
+        pop de
+        ret
+
+; HL = the current layout: joylays (5678+0) or joycus. Keeps BC, DE.
+joylay: ld hl,joylays
+        ld a,(joyidx)
+        or a
+        ret z
+        ld hl,joycus
         ret
 
 ; C = an F-key's bit in column 0: Z if it is down in 32 reads running
@@ -805,14 +1344,9 @@ nextcol:
         xor a
 nc1:    ld (scheme),a
         call setcol
-        ld a,(scheme)           ; 32 bytes a message: msg_col0 on
-        rrca
-        rrca
-        rrca
-        ld e,a
-        ld d,0
+        ld a,(scheme)
         ld hl,msg_col0
-        add hl,de
+        call msgn
         jp show
 
 ; The scheme into the VIC and colour RAM: the characters' colour (written
@@ -883,14 +1417,9 @@ rs_up:  ld a,(CIA1+1)
         xor a
         ld (inkbd),a
         ld (d1active),a
-        ld a,(ramsize)
-        rrca                    ; 32 bytes a message: msg_1k, msg_16k, msg_32k
-        rrca
-        rrca
-        ld e,a
-        ld d,0
+        ld a,(ramsize)          ; msg_1k, msg_16k, msg_32k
         ld hl,msg_1k
-        add hl,de
+        call msgn
         call show
         ld a,KALL_ROM           ; the ROM's own byte where zx64 puts the rows
         ld (KALL),a
@@ -934,7 +1463,8 @@ romsum_v:
         dw 0
 
 ; Changed: the 6510 reads it again from the boot file, ZX81 on the disk
-; zx64 came from, with the bar on the top row (about 20 seconds).
+; zx64 came from, with the bar on the top row (about 20 seconds), and
+; puts it in place only if it is this build's ROM (dorom in c64/boot.asm).
 romfix: ld hl,txt_load
         ld de,txt_rom
         ld c,7
@@ -946,8 +1476,14 @@ romfix: ld hl,txt_load
         ld a,CMD_ROM
         ld (MBOX),a
         call call6510
-        ld hl,(ovl_msg)         ; the size on the top row again
-        jp show
+        ld hl,MSGBUF            ; the size on the top row again, or why the
+        call showb              ; ROM wasn't read again: the 6510 put it
+        ld a,(MBOX+1)           ; there (dorom), and it stays 5 seconds
+        or a
+        ret z
+        ld a,250
+        ld (ovl),a
+        ret
 rom_name:
         db 4,"ZX81"
 
@@ -967,8 +1503,11 @@ mykbd:  ld a,1
         ld (inkbd),a
         call scan
         jr z,kb_up
+        call mirror             ; every stick key for IN A,($FE)...
+        ld a,(jmulti)
+        or a
+        call nz,jone            ; ...one for KEYBOARD and the type-ahead
         call edges
-        call mirror
         jr mykbd_rom
 kb_up:  ld a,(kpup)             ; nothing down: no new key either, and the
         or a                    ; rows need remembering only once
@@ -1102,6 +1641,8 @@ brk:    xor a                   ; a program line runs (BREAK-1 comes from
         ld (edit),a             ; NEXT-LINE): keys are the program's now
         ld a,$FE
         call cread
+        cp $FF
+        call nz,bg0             ; a ghost of the stick's?
         call brk_f5
         and $08
         jr nz,bk_brk
@@ -1112,6 +1653,8 @@ brk:    xor a                   ; a program line runs (BREAK-1 comes from
         jp z,reset
 bk_brk: ld a,$7F
         call cread
+        cp $FF
+        call nz,bg7
         push af
         ld a,$FF
         ld (CIA1),a
@@ -1135,12 +1678,28 @@ brk_f5: push af
         push bc
         ld c,$40
         call held
+        jr nz,bf_pop
+        ld a,$FD                ; SHIFT down (column 1 row 7, column 6
+        call cread              ; row 4): F6, not here
+        rla
+        jr nc,bf_pop
+        ld a,$BF
+        call cread
+        and $10
+        jr z,bf_pop
         pop bc
-        jr nz,bf_done
         inc (hl)
         call mon_call
         jr bf_done
-bf_up:  ld (hl),0
+bf_pop: pop bc
+        jr bf_done
+bf_up:  ld a,(irqseen)          ; the IRQ scanning (SLOW, /INT): scan says
+        or a                    ; when it is up, every frame (an IRQ
+        jr z,bf_clr             ; between cread's reads leaves no column
+        ld a,(CDFLAG)           ; selected: a false up)
+        and $40
+        jr nz,bf_done
+bf_clr: ld (hl),0
 bf_done:
         pop hl
         pop af
@@ -1235,13 +1794,23 @@ sn1:    ld (MBOX+2),a
         ld hl,MBOX+3
 sn2:    ld a,(de)
         and $3F
-        push de
+        cp 38                   ; A-Z
+        jr c,sn_dig
+        add a,'A'-38
+        jr sn4
+sn_dig: cp 28                   ; 0-9
+        jr c,sn_tab
+        add a,'0'-28
+        jr sn4
+sn_tab: push de                 ; the rest: zx2pet
         ld de,zx2pet
         add a,e
         ld e,a
-        ld a,(de)
+        jr nc,sn3
+        inc d
+sn3:    ld a,(de)
         pop de
-        ld (hl),a
+sn4:    ld (hl),a
         inc hl
         inc de
         djnz sn2
@@ -1296,9 +1865,14 @@ mon_call:                       ; from zx64's code: the same on the stack
         inc a
 mon_go: di
         ld (moniff),a
-        xor a
-        ld (monreq),a
-        call mon_here
+        ld hl,monreq
+        ld a,(hl)
+        ld (hl),0
+        cp 2                    ; F6 held: teach, no monitor
+        jr nz,mg_mon
+        call teach
+        jr mon_ret
+mg_mon: call mon_here
         call nz,mon_load
         jp z,MON
         ld hl,msg_nomon         ; not on the disk: said on the top row
@@ -1445,10 +2019,23 @@ f5down:   db 0                  ; F5 is down
 monreq:   db 0                  ; F5 pressed: the monitor at the next chance
 moniff:   db 0                  ; the monitor goes back with interrupts on
 monwhy:   db 0                  ; 0 F5, 1 a breakpoint
-bpcnt:    db 0                  ; the monitor's breakpoints armed, then each
-bptab:    ds 6*3                ; as address, the byte it replaced
+bpcnt:    db 0                  ; the monitor's breakpoints armed (bptab)
 ramsize:  db 1                  ; 0 1K, 1 16K, 2 32K (F3; F7 keeps it)
 scheme:   db 0                  ; the colours (F2; F7 keeps them)
+joyidx:   db 0                  ; the stick's layout, 0 5678+0, 1 taught (F6; F7 keeps it)
+joyhave:  db 0                  ; a custom layout has been taught
+jnow:     db $FF                ; the stick at this scan (jread)
+jprev:    db $FF                ; at the last one (jmerge)
+jlast:    db $FF                ; the entry KEYBOARD gets, $FF none
+jmulti:   db 0                  ; more than one stick key down (jone)
+joylays:                        ; up, down, left, right, fire (see jread)
+        db $EF,$F7, $EF,$EF, $F7,$EF, $EF,$FB, $EF,$FE  ; 7 6 5 8 0
+joycus: db $FE,$FF, $FE,$FF, $FE,$FF, $FE,$FF, $FE,$FF  ; taught (hold F6)
+f6on:     db 0                  ; F5 down as F6: 1, held a second: 2
+f6t0:     db 0                  ; tick as F6 went down
+f6old:    db 0                  ; joyidx before it
+teaching: db 0                  ; hold F6 is asking for keys
+        include "keychr.inc"
 hello:    db 1                  ; the version not shown yet
 ramtops:  dw $43FF,$7FFF,$BFFF  ; the last byte of RAM for each
 ovl:      db 0                  ; frames the message stays on the top row
@@ -1458,13 +2045,12 @@ kq_out:   db 0
 kpup:     db 0                  ; kprev is all up
 kand:     db $FF                ; the rows ANDed, for KALL
 kprev:    db $FF,$FF,$FF,$FF,$FF,$FF,$FF,$FF  ; the ZX81 rows at the last scan
-kq:       ds 32
-        ds (($ + 255) / 256) * 256 - $
-cmat:   ds 16                   ; C64 matrix, one byte a column (page aligned)
-zx2pet:                         ; ZX81 code 0-63 -> PETSCII (same page)
+zx2pet:                         ; ZX81 code 0-27 -> PETSCII
         include "zx2pet.inc"
         include "msgs.inc"
 keymap:
         include "keymap.inc"
+kshtab:                         ; (kshift)
+        include "kshift.inc"
 
         end

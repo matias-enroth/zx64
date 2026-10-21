@@ -112,6 +112,13 @@ keys: some combinations of keys held down make the C64's keyboard report
 one that isn't pressed. Typed quickly, `TEST` could come out as `TESFT`;
 zx64 gives `TEST`.
 
+A joystick in port 2 goes in at the same place, as the ZX81 keys of its
+[layout](#the-joystick). Its lines are the keyboard's column lines, so
+with the stick held a key in one of its columns shows in every column:
+fire and `0` together would read as F7, the reset. zx64 takes those
+ghosts out too, at the price of a key in such a row elsewhere while the
+stick is held.
+
 ### The disk
 
 The disk is the 6510's job. For `LOAD` and `SAVE` the Z80 leaves a
@@ -211,7 +218,7 @@ The keys are on the same places as on the ZX81's keyboard, with the
 ZX81's legends:
 
 <p align="center">
-  <img src="img/keyboard.png" width="100%" alt="The C64 keyboard with the ZX81's legends: keywords above, SHIFT symbols in red, functions below, block graphics in the corners; F1, F3, F5, F7 as type-ahead and colours, RAM size, monitor, reset">
+  <img src="img/keyboard.png" width="100%" alt="The C64 keyboard with the ZX81's legends: keywords above, SHIFT symbols in red, functions below, block graphics in the corners; F1, F3, F5, F7 as type-ahead and colours, RAM size, monitor and joystick, reset">
 </p>
 
 Printable overlay: [keyboard.pdf](keyboard.pdf). Keyboard viewer, to
@@ -224,6 +231,7 @@ open locally: `docs/keyboard.html`.
 | F2 (SHIFT F1) | the next colour scheme |
 | F3 | memory: 16K, 32K, 1K (resets) |
 | F5 | the monitor |
+| F6 (SHIFT F5) | the joystick: 5678+0 or your own keys; held, set your own |
 | F7 | reset |
 
 - **Type-ahead** (on by default): type at C64 speed.
@@ -231,8 +239,11 @@ open locally: `docs/keyboard.html`.
   amber, black on green, C64 blue.
 - **Memory** (F3): 16K, the default, as with Sinclair's RAM pack; 32K,
   RAM from `$4000` to `$BFFF`, all for BASIC; 1K, the bare ZX81.
-- **F7**: reset, keeping the settings. A ROM changed by a program is
-  read again from disk first.
+- **F7**: reset, keeping the settings (the joystick's layout too). A
+  ROM changed by a program is read again from disk first, from the
+  `ZX81` file zx64 started from. If the disk has none, or one from
+  another version of zx64, the ROM stays as it is and the top row says
+  so: `ROM NOT RELOADED: NO ZX81` or `OTHER ZX81`.
 
 ## Games
 
@@ -260,6 +271,27 @@ its bytes into a PRG file (for example
 `make`: it goes on zx64's disk, and `tools/pcheck.py` warns if it uses
 something zx64 can't do, such as add-on hardware or hi-res. `SAVE
 "NAME"` saves to the same disk.
+
+### The joystick
+
+A joystick in port 2 gives ZX81 keys. At the start they are the Sinclair
+cursor keys, the most common: 7 6 5 8 for up, down, left and right, 0 for
+fire. ZX81 games read the keyboard, and each picks its own keys, so you
+can teach zx64 a game's own. F6 (SHIFT F5) then switches between the two
+layouts, each shown on the top row as its keys: `U7 D6 L5 R8 F0`.
+
+**Your own keys:** hold F6 for a second. The program stops where it is
+and the top row asks for each key in turn, a `?` at the one it wants:
+`U? D- L- R- F-`. Press the game's key for it. F1 gives a direction no
+key, F5 gives up and keeps the layout as it was. After the fire key the
+program carries on with your layout, which stays until you switch off.
+
+On a diagonal, games that read keys through the ROM (`INKEY$`, most
+BASIC games) get the direction pressed last: the ROM takes two keys at
+once as none. Games that read the keyboard themselves get both.
+
+In FAST mode F6 still switches the layouts, but a hold doesn't stop the
+program to ask for keys.
 
 ## The monitor
 

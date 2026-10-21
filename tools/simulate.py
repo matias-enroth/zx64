@@ -34,7 +34,7 @@ except ImportError:
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(ROOT, "tools"))
-from build import KEYMAP, MATRIX, SHIFTED  # noqa: E402
+from build import KEYMAP, MATRIX, SHIFTED, zx2pet  # noqa: E402
 
 ZX = ' ??????????"£$:?()><=+-*/;,.0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ'
 FRAME_T = 2 * 19656          # Z80 T-states in a PAL frame (VICE: 2 per cycle)
@@ -56,6 +56,10 @@ for c64, zx in KEYMAP:
 # C64 keys with no ZX81 key of their own
 C64NAMES = {"LSHIFT": (1, 7), "RSHIFT": (6, 4), "CRSRRIGHT": (0, 2), "CRSRDOWN": (0, 7),
             "F1": (0, 4), "F3": (0, 5), "F5": (0, 6), "F7": (0, 3)}
+
+# The joystick in port 2: $DC00's bits, 0 when pressed. Its lines are the
+# keyboard's column lines, so a held direction selects that column too.
+STICK = {"up": 0, "down": 1, "left": 2, "right": 3, "fire": 4}
 
 # The monitor's keys: every C64 key by name, and the ASCII it types
 MPOS = {name: (c, r) for c, col in enumerate(MATRIX) for r, name in enumerate(col)}
@@ -139,6 +143,7 @@ class Machine:
         self.ciareads = 0
         self.colreads = 0
         self.pa = 0xFF                           # CIA1 port A, the column select
+        self.joy = set()                         # the stick in port 2: STICK names held
         self.latch = 0                           # VIC $D019
         self.enable = 0                          # VIC $D01A
         self.z80_on = False
@@ -170,7 +175,7 @@ class Machine:
         z.set_read_callback(self._z80_read)
         z.set_write_callback(self._z80_write)
         self.d1 = self.lbl["d1active"]           # frame() sets it to 2: the ROM is in DISPLAY-1
-        self.reads = {0xC011, 0xC012, 0xC019, 0xCC01} | set(range(0xC800, 0xCC00))   # colour RAM too
+        self.reads = {0xC011, 0xC012, 0xC019, 0xCC00, 0xCC01} | set(range(0xC800, 0xCC00))   # colour RAM too
         self.writes = {0xC019, 0xC01A, 0xCC00, self.d1} | set(range(0xCE00, 0xCF00))
         for a in self.reads:
             z.mark_addrs(a, 1, z.READ_MARK)
@@ -204,6 +209,7 @@ class Machine:
         if self.cia_glitch and self.ciareads % 211 == 0:
             return 0xD0                          # as seen on hardware: now and then one
         cols = {c for c in range(8) if not (self.pa >> c) & 1}   # read comes back wrong
+        cols |= {STICK[d] for d in self.joy}     # the stick pulls column lines low too
         rows, grew = set(), True                 # no diodes: a row a key connects to
         while grew:                              # a selected column, through any path
             grew = False                         # of keys down (three corners of a
@@ -226,6 +232,11 @@ class Machine:
             return self.z.memory[a] & 0x0F | 0xF0
         if a == 0xCC01:
             return self._kbd()
+        if a == 0xCC00:                          # port A: what was written, the
+            self.ciareads += 1                   # stick's lines pulled low (and
+            if self.cia_glitch and self.ciareads % 211 == 0:   # wrong now and then, as
+                return 0xD0                      # port B is)
+            return self.pa & ~sum(1 << STICK[d] for d in self.joy) & 0xFF
         if a == 0xC019:
             return self._d019()
         if a == 0xC011:                          # bit 7 reads as the line's bit 8,
@@ -578,20 +589,22 @@ def main():
           " ".join(f"${v:04X}" for v in seen))
 
     costs = {}
-    for label, keys in (("no key", set()), ("key down", {C64KEY[ZXKEY["P"]]})):
-        m.keys = keys
+    for label, keys, joy in (("no key", set(), set()), ("key down", {C64KEY[ZXKEY["P"]]}, set()),
+                             ("stick", set(), {"up"})):
+        m.keys, m.joy = keys, joy
         for tick in (0, 1):                      # irqh increments tick first
             m.z.memory[lb["tick"]] = tick
             m.z.memory[lb["d1active"]] = 0
             m.z.memory[lb["inkbd"]] = 0
             costs[label, tick] = m.call(lb["irqh"])
-    m.keys = set()
-    check("IRQs without the VIC's raster flag (all 7 above) are counted as stray",
-          m.peek16(lb["stray"]) == 7, f"{m.peek16(lb['stray'])}")
+    m.keys, m.joy = set(), set()
+    check("IRQs without the VIC's raster flag (all 9 above) are counted as stray",
+          m.peek16(lb["stray"]) == 9, f"{m.peek16(lb['stray'])}")
     m.poke16(lb["stray"], 0)
     check("IRQ, no key down, no picture: under 1,300 T", costs["no key", 0] < 1300, f"{costs['no key', 0]} T")
     check("IRQ, a key down, no picture: under 7,500 T", costs["key down", 0] < 7500, f"{costs['key down', 0]} T")
     check("IRQ with the picture: under 15,000 T", costs["no key", 1] < 15000, f"{costs['no key', 1]} T")
+    check("IRQ, the stick held, no picture: under 7,500 T", costs["stick", 0] < 7500, f"{costs['stick', 0]} T")
     print(f"     (a PAL frame is {FRAME_T} T at 2 T a cycle, as VICE runs the Z80)")
 
     # the cursor keys: what KEYBOARD returns for C64 keys and for ZX81 ones
@@ -606,6 +619,7 @@ def main():
     def cread(col, keys):
         m.keys = keys
         m.ciareads = 210                         # the next read is the wrong one
+        m.z.a = col
         m.call(lb["cread"])
         m.keys = set()
         return m.z.a
@@ -618,6 +632,7 @@ def main():
              (("LSHIFT", "CRSRRIGHT"), ("SHIFT", "5"), "left"), (("RSHIFT", "CRSRDOWN"), ("SHIFT", "7"), "up")]
     bad = [why for c64, zx, why in pairs if kbd(*c64) != kbd(*zx)]
     check("CRSR keys: right, down; with SHIFT left, up", not bad, f"wrong: {bad}" if bad else "")
+
 
     # IN A,($FE) reads memory at A*256+$FE on the cartridge: each scan puts
     # the rows there, and all of them ANDed at $00FE (A = 0) while a
@@ -655,6 +670,73 @@ def main():
           ok_edit and keep == [(0x55, 0xFD), (0x55, 0xFD)],
           f"{ok_edit} " + " ".join(f"${a:02X} ${b:02X}" for a, b in keep))
 
+    # the stick in port 2: KEYBOARD (LAST_K, INKEY$) gets one key, the one
+    # pressed last; the IN A,($FE) copies get every key the stick holds
+    def want(*names):                            # KEYBOARD for those keys, no stick
+        joy, m.joy = m.joy, set()
+        hl = kbd(*names)
+        m.joy = joy
+        return hl
+    nokey = want()
+    bad = []
+    for d, k in (("up", "7"), ("down", "6"), ("left", "5"), ("right", "8"), ("fire", "0")):
+        m.joy = {d}
+        if kbd() != want(k):
+            bad.append(d)
+        m.joy = set()
+        kbd()
+    check("stick: each direction gives KEYBOARD its 5678+0 key", not bad, f"wrong: {bad}" if bad else "")
+    m.z.memory[lb["edit"]] = 0                   # a program runs
+    m.joy = {"up"}
+    kbd()
+    m.joy = {"up", "right"}
+    diag = kbd()
+    diag_in = inrows()[0xEF]
+    m.joy = set()
+    kbd()
+    check("stick: a diagonal gives KEYBOARD the direction pressed last, the IN mirror both",
+          diag == want("8") and diag_in == 0xF3, f"${diag:04X} (8: ${want('8'):04X}), IN row $EF ${diag_in:02X}")
+    m.joy = {"left"}
+    kbd()
+    m.joy = {"left", "fire"}
+    fire = kbd()
+    m.joy = {"left"}
+    back = kbd()
+    m.joy = set()
+    kbd()
+    check("stick: fire while moving gives fire; let go, the direction again",
+          fire == want("0") and back == want("5"), f"${fire:04X} ${back:04X}")
+    seen = []
+    for joy in ({"up"}, set()):
+        m.joy = joy
+        for _ in range(3):
+            m.ciareads = 210                     # the next CIA read is the wrong one
+            seen.append(kbd())
+    m.joy = set()
+    kbd()
+    check("stick: a wrong read of port A neither moves nor drops it",
+          seen == [want("7")] * 3 + [nokey] * 3, " ".join(f"${v:04X}" for v in seen))
+    cus0 = bytes(m.z.memory[lb["joycus"]:lb["joycus"] + 10])
+    m.z.memory[lb["joycus"]:lb["joycus"] + 10] = bytes([0xFE, 0xFF, 0xFE, 0xFF, 0xF7, 0xEF, 0xEF, 0xFB, 0xEF, 0xFE])
+    m.z.memory[lb["joyidx"]] = 1                 # a custom layout with no up or down: - - 5 8 0
+    m.joy = {"right"}
+    kbd()
+    m.joy = {"right", "up"}
+    drift = kbd()
+    m.joy = set()
+    kbd()
+    m.joy = {"up"}                               # only a direction it leaves out,
+    kbd()
+    m.joy = set()                                # let go, then 5678+0
+    kbd()
+    m.z.memory[lb["joyidx"]] = 0
+    after = kbd()
+    m.z.memory[lb["joycus"]:lb["joycus"] + 10] = cus0
+    check("stick: a diagonal onto a direction the layout leaves out keeps the other's key",
+          drift == want("8"), f"${drift:04X}")
+    check("stick: let go from a direction the layout leaves out, it is up for the next layout too",
+          after == nokey, f"${after:04X}")
+
     # a collapsed display (1K programs): a 10-character line, then 21
     df = [0x76]
     for line in (["ABCDEFGHIJ", "KLMNOPQRSTUVWXYZABCDE"] + [""] * 22):
@@ -672,14 +754,15 @@ def main():
 
     # a setting's message goes back over the top row before row 1 is copied:
     # after the whole picture would be when the VIC is drawing that row
-    msg = bytes(m.z.memory[lb["msg_kbon"]:lb["msg_kbon"] + 32])
+    m.call(lb["show"], hl=lb["msg_kbon"])         # (made into 32 characters at MSGBUF)
+    msg = bytes(m.z.memory[lb["msgbuf"]:lb["msgbuf"] + 32])
     for df in (False, True):                     # the full display, a collapsed one
         if df:
             m.poke16(0x400C, 0x6000)
             m.poke16(0x4010, 0x6000 + 25)
             m.z.memory[0x6000:0x6000 + 25] = bytes([0x76] * 25)
         m.z.memory[lb["ovl"]] = 100
-        m.poke16(lb["ovl_msg"], lb["msg_kbon"])
+        m.poke16(lb["ovl_msg"], lb["msgbuf"])
         m.z.memory[SCREEN + 4:SCREEN + 36] = bytes(32)
         seen = []
 
@@ -724,6 +807,13 @@ def main():
     m.tap("F1", frames=10)
     m.until(lambda: not m.z.memory[lb["ovl"]], 200, "the message gone")
     check("boots to the K cursor", m.cursor(), f"(frame {m.frames}, {m.irqs} IRQs)")
+    m.joy = {"up"}
+    m.run(30)
+    m.joy = set()
+    m.run(10)
+    typed = m.screen()[22:]
+    m.type("SHIFT+0")
+    check("stick in the editor: held 30 frames, one 7 typed", any(r in ("7k", "7l") for r in typed), f"{typed}")
     r = enter(m, "P 2 SHIFT+K 2")
     check("PRINT 2+2", m.screen()[0] == "4" and r == "0/0", f"{m.screen()[0]!r} {r}")
 
@@ -733,6 +823,14 @@ def main():
     r = enter(m, "S SHIFT+P T SHIFT+P")
     t = m.drive.files.get(b"T", b"")
     eline = m.peek16(0x4014)
+    names = []                                   # setname: every ZX81 code, inverse too
+    for first in range(0, 128, 16):
+        m.z.memory[0x7000:0x7010] = bytes(range(first, first + 16))
+        m.z.de, m.z.bc = 0x7000, 15
+        m.call(lb["setname"], resume=True)
+        names.append(bytes(m.z.memory[0x2F03:0x2F13]))
+    check("file names: each ZX81 code as its PETSCII", b"".join(names) == bytes(zx2pet()) * 2,
+          b"".join(names).hex())
     check('SAVE "T"', r == "0/0" and len(t) == eline - 0x4009, f"{r}, {len(t)} bytes, E_LINE-$4009 = {eline - 0x4009}")
 
     def zx(codes):                               # inverse codes as text, inverse as plain
@@ -912,6 +1010,20 @@ def main():
     check("type-ahead: TEST typed fast is TEST, not TESFT (the C64 matrix's ghost key)",
           m.screen()[0] == "TEST" and r == "0/0", f"{m.screen()[0]!r} {r}")
 
+    def keys(*steps):                                        # C64 keys by MPOS name, 2 frames each
+        for s in steps:
+            m.keys = {MPOS[k] for k in s.split()}
+            m.run(2)
+        m.keys = set()
+        m.run(30)
+    m.type("P SHIFT+P")                                      # PRINT "
+    keys("A", "", "DEL", "DEL G", "G", "",                   # G down before DEL is up
+         "B", "", "D", "", "LEFTARROW", "LEFTARROW C", "C",  # C down before <- (SHIFT 5) is up
+         "", "CRSRRIGHT")                                    # (back past the D)
+    r = enter(m, "SHIFT+P")
+    check("type-ahead: a key down while DEL or <- is still down has no SHIFT from them (G, not LLIST)",
+          m.screen()[0] == "GBCD" and r == "0/0", f"{m.screen()[0]!r} {r}")
+
     m.type("1 0 G 1 0 NEWLINE")                              # 10 GOTO 10
     m.type("R")
     m.keys = {C64KEY[ZXKEY["NEWLINE"]]}
@@ -992,6 +1104,43 @@ def main():
           back and m.drive.opens == opens + 1 and m.barlog and not m.channels,
           f"ROM {'back' if back else 'still wrong'}, {m.drive.opens - opens} opens, {len(m.barlog)} bar writes")
 
+    # The ROM read again only if the boot file is this build's, into the
+    # ZX81's RAM first, clear of the Z80's stack; why not, on the top row
+    def f7_rom(m, files, damage=0x0100):
+        m.drive.files.pop(b"ZX81", None)
+        m.drive.files.update(files)
+        m.z.memory[damage] ^= 0x55
+        hurt = bytes(m.z.memory[0x0005:0x2000])
+        opens = m.drive.opens
+        m.tap("F7", 3)
+        m.until(lambda: m.cursor() and m.ready(), 600, "the K cursor after F7")
+        return bytes(m.z.memory[0x0005:0x2000]) == hurt, m.drive.opens - opens, m.screen()[0].strip()
+    prg = open(os.path.join(ROOT, "build", "zx81.prg"), "rb").read()
+    other = bytearray(prg)
+    other[2 + 0x1000 - 0x0801 + 0x0400] ^= 0xFF                 # another build: a byte of its ROM
+    seen = [f7_rom(m, {}), f7_rom(m, {b"ZX81": bytes(other)}, damage=0x0200)]
+    m.z.memory[0x0100] ^= 0x55                               # (both left the ROM as it was)
+    m.z.memory[0x0200] ^= 0x55
+    check("F7: no ZX81 on the disk, or another build's: the ROM left as it was, the ZX81 starts, "
+          "the top row says why",
+          seen == [(True, 1, "rom not reloaded: no zx81"), (True, 1, "rom not reloaded: other zx81")], f"{seen}")
+    sv = lb["romsum_v"]
+    m.z.memory[sv] ^= 1                                      # zx64's own copy of the sum
+    seen = f7_rom(m, {b"ZX81": prg})
+    m.z.memory[sv] ^= 1
+    m.z.memory[0x0100] ^= 0x55
+    check("F7 with zx64's own code written over (romsum_v): no disk access, the top row says so",
+          seen == (True, 0, "zx64 changed: load it again"), f"{seen}")
+    for _ in range(2):                                       # 32K, then 1K: the Z80's stack
+        m.tap("F3", 3)                                       # under $4400
+        m.until(lambda: m.cursor() and m.ready(), 600, "the K cursor after F3")
+    m.z.memory[0x6000:0x8000] = bytes(0x2000)
+    ok, opens, top = f7_rom(m, {b"ZX81": prg})
+    back = bytes(m.z.memory[0x0005:0x2000]) == rom[0x0005:]
+    check("F7 in 1K (the stack in the first buffer, Z80 $4000): read into the other ($6000), the ROM back",
+          back and opens == 1 and bytes(m.z.memory[0x6005:0x8000]) == rom[0x0005:] and top.startswith("1k ram "),
+          f"ROM {'back' if back else 'wrong'}, {opens} opens, {top!r}")
+
     # ---- F3: 16K, 32K, 1K, 16K again; each starts the ZX81 again
     def size(m):
         top = tap(m, "F3")
@@ -1063,6 +1212,242 @@ def main():
     r, scr = mem(m)
     check("MEM finds a byte that doesn't hold ($9000)", any(x.endswith("FIRST AT 36864") for x in scr),
           f"{scr[-2:]}")
+
+    # ---- the joystick: F6 (SHIFT+F5) switches the layouts
+    m = Machine(int_wired=True)
+    m.boot()
+    lb = m.lbl
+    kpage = lb["kpage"]
+
+    def f6(frames=3):                            # SHIFT+F5 down, then up; SHIFT's row
+        m.keys = {C64NAMES["LSHIFT"], C64NAMES["F5"]}   # bit as the program sees it meanwhile
+        m.run(frames)
+        shift = m.z.memory[kpage + 0xFE] & 1
+        m.keys = set()
+        m.run(10)
+        return shift
+
+    def joyrow(keys):                            # the top row as screen() shows it
+        return (" joystick  " + " ".join(n + k for n, k in zip("udlrf", keys))).ljust(27) + "  f6"
+
+    rows, shifts, reqs = [], [], []
+    for _ in range(4):
+        shifts.append(f6())
+        rows.append(m.screen()[0])
+        reqs.append(m.z.memory[lb["monreq"]])
+    check("F6 with no keys taught stays on 5678+0, shown on the top row",
+          rows == [joyrow("76580")] * 4 and m.z.memory[lb["joyidx"]] == 0, f"{rows}")
+    check("F6 is not the monitor, and SHIFT held for it doesn't reach the program",
+          reqs == [0] * 4 and shifts == [1] * 4, f"monreq {reqs}, SHIFT bit {shifts}")
+    m.run(100)
+
+    mc = lb["mon_call"]                          # BREAK-1's F5 check: SHIFT+F5 isn't F5
+    keep = m.z.memory[mc]
+    m.z.memory[mc] = 0xC9
+    m.z.memory[lb["f5down"]] = 0
+    edit = m.z.memory[lb["edit"]]                # (brk says a program runs: the
+    m.keys = {C64NAMES["LSHIFT"], C64NAMES["F5"]}   # editor's state back afterwards)
+    m.call(lb["brk"], resume=True)
+    took = m.z.memory[lb["f5down"]]
+    m.keys = set()
+    m.z.memory[mc] = keep
+    m.z.memory[lb["f5down"]] = 0
+    m.z.memory[lb["edit"]] = edit
+    m.z.memory[0x00FE] = lb["kall_rom"]
+    m.run(10)
+    check("F6 in BREAK-1 is not the monitor", took == 0, f"f5down {took}")
+
+    for line in ("5 L A SHIFT+L 0", "1 0 L A SHIFT+L A SHIFT+K 1", "2 0 G 1 0"):
+        m.type(line + " NEWLINE")                # 5 LET A=0, 10 LET A=A+1, 20 GOTO 10
+    m.type("R")
+    m.keys = {C64KEY[ZXKEY["NEWLINE"]]}
+    m.run(3)
+    m.keys = set()
+    m.run(30)
+
+    def aval():                                  # A's value, as the calculator holds it
+        return bytes(m.z.memory[m.peek16(0x4010) + 1:m.peek16(0x4010) + 6])
+    m.z.memory[lb["joyhave"]] = 1                # as if taught: F6 switches
+    a1 = aval()
+    f6()
+    m.run(20)
+    check("a tap of F6 doesn't stop the program", aval() != a1 and m.z.memory[lb["joyidx"]] == 1,
+          f"joyidx {m.z.memory[lb['joyidx']]}")
+    f6()                                         # back to 5678+0 for the stick below
+    bad = []
+    for d in STICK:
+        kb, sch = m.z.memory[lb["kbuf"]], m.z.memory[lb["scheme"]]
+        m.joy = {d}
+        m.run(3)
+        m.tap("F1", frames=10)
+        a1 = aval()
+        m.run(10)
+        if m.z.memory[lb["kbuf"]] == kb or m.z.memory[lb["scheme"]] != sch or m.z.memory[lb["monreq"]] \
+                or aval() == a1:
+            bad.append(d)
+        m.tap("F1", frames=10)
+        m.joy = set()
+        m.run(3)
+    check("with the stick held in any direction F1 does only its own job", not bad, f"wrong: {bad}")
+    bad = []                                     # its column's row-3 key shows as F7 in
+    for d, k in (("down", "4"), ("left", "6"), ("right", "8"), ("fire", "0"),   # column 0; with up
+                 ("up right", "8"), ("up fire", "0"), ("up right", "H"),         # held too, any key
+                 ("up left", "F"), ("up right", "U"), ("up right", "B")):        # of the other column
+        m.joy, m.keys = set(d.split()), {MPOS[k]}                               # is an F-key there
+        a1, kb = aval(), m.z.memory[lb["kbuf"]]
+        m.run(60)
+        if aval() == a1 or m.z.memory[0x4000] != 0xFF or m.z.memory[lb["ramsize"]] != 1 \
+                or m.z.memory[lb["kbuf"]] != kb or m.z.memory[lb["monreq"]]:
+            bad.append(f"{d}+{k}")
+        m.joy, m.keys = set(), set()
+        m.run(3)
+    check("the stick held and a key in its column: no F-key, no BREAK, the program runs on", not bad,
+          f"wrong: {bad}")
+    m2 = Machine(int_wired=True)                 # a key let go between BREAK-1's read of
+    m2.boot()                                    # column 7 and its read of the stick's
+    seen, kbd0 = [], m2._kbd                     # ghosts: fire held, M (fire's column,
+                                                 # SPACE's row) let go just then
+    def let_go():
+        if m2.pa == 0x7F:
+            seen.append(1)
+        elif m2.pa == 0xFF and seen:
+            m2.keys = set()
+        return kbd0()
+    m2._kbd = let_go
+    m2.joy, m2.keys = {"fire"}, {MPOS["M"]}
+    m2.call(m2.lbl["brk"])
+    check("BREAK-1: a key in the stick's column let go between its reads is no BREAK",
+          seen and m2.z.a == 0xFF, f"A ${m2.z.a:02X}")
+    m.keys = {C64KEY[ZXKEY["SPACE"]]}            # BREAK
+    m.until(lambda: m.z.memory[0x4000] != 0xFF, 200, "BREAK")
+    m.keys = set()
+    m.until(m.ready, 300, "the key wait")
+
+    f6()                                         # the custom layout (as if taught)
+    m.tap("F7", frames=10)
+    m.until(lambda: m.cursor() and m.ready(), 600, "the K cursor after F7")
+    after_f7 = m.z.memory[lb["joyidx"]]
+    m.tap("F3", frames=10)
+    m.until(lambda: m.cursor() and m.ready(), 600, "the K cursor after F3")
+    after_f3 = m.z.memory[lb["joyidx"]]
+    for _ in range(2):                           # 32K, 1K, back to 16K
+        m.tap("F3", frames=10)
+        m.until(lambda: m.cursor() and m.ready(), 600, "the K cursor after F3")
+    check("F7 and F3 keep the layout", after_f7 == 1 and after_f3 == 1, f"after F7 {after_f7}, F3 {after_f3}")
+    m.z.memory[lb["joyidx"]] = m.z.memory[lb["joyhave"]] = 0   # nothing taught yet
+
+    # ---- the joystick: F6 held a second teaches a layout, the program frozen
+    def hold6():                                 # SHIFT+F5 down 60 frames, then up
+        m.keys = {C64NAMES["LSHIFT"], C64NAMES["F5"]}
+        m.run(60)
+        m.keys = set()
+        m.run(5)
+
+    def answer(*names):                          # a C64 key (by MPOS or C64NAMES name), down and up
+        m.keys = {C64NAMES[n] if n in C64NAMES else MPOS[n] for n in names}
+        m.run(3)
+        m.keys = set()
+        m.run(3)
+
+    def cus():
+        return bytes(m.z.memory[lb["joycus"]:lb["joycus"] + 10])
+    for line in ("5 L A SHIFT+L 0", "1 0 L A SHIFT+L A SHIFT+K 1", "2 0 G 1 0"):
+        m.type(line + " NEWLINE")                # 5 LET A=0, 10 LET A=A+1, 20 GOTO 10
+    m.type("R")
+    m.keys = {C64KEY[ZXKEY["NEWLINE"]]}
+    m.run(3)
+    m.keys = set()
+    m.run(30)
+    hold6()
+    a1 = aval()
+    m.run(50)
+    asked = m.screen()[0]
+    check("hold F6: the program stops, the top row asks for up", aval() == a1 and asked == joyrow("?----"),
+          f"{asked!r}")
+    rows = []
+    for k in ("R", "F", "J", "K"):
+        answer(k)
+        rows.append(m.screen()[0])
+    m.run(20)
+    frozen = aval() == a1
+    answer("F1")
+    m.run(5)
+    shown = m.screen()[0]
+    want = bytes([0xFB, 0xF7, 0xFD, 0xF7, 0xBF, 0xF7, 0xBF, 0xFB, 0xFE, 0xFF])
+    check("teaching R F J K and F1 (none): the custom layout, shown and selected, the program frozen till then",
+          cus() == want and m.z.memory[lb["joyidx"]] == 1 and m.z.memory[lb["joyhave"]] and frozen
+          and rows == [joyrow("r?---"), joyrow("rf?--"), joyrow("rfj?-"), joyrow("rfjk?")]
+          and shown == joyrow("rfjk-"), f"{cus().hex()} {rows} {shown!r}")
+    m.run(20)
+    inr = {r: m.z.memory[r * 256 + 0xFE] for r in [0] + list(ZXROWS)}
+    check("after teaching the program runs on, no key left down for it (LAST_K, the IN A,($FE) copies)",
+          aval() != a1 and m.peek16(0x4025) == 0xFFFF and set(inr.values()) == {0xFF},
+          f"LAST_K ${m.peek16(0x4025):04X}, {inr}")
+
+    hold6()
+    answer("CRSRRIGHT")
+    answer("LSHIFT")
+    for _ in range(2):
+        answer("F1")
+    answer("SPACE")
+    space = m.z.memory[SCREEN + 4 + 24]          # fire, SPACE: plain, not inverse
+    check("a cursor key answers as its key without SHIFT, SHIFT alone as SHIFT; SPACE shown plain",
+          cus()[:4] == bytes([0xEF, 0xFB, 0xFE, 0xFE]) and cus()[8:] == bytes([0x7F, 0xFE]) and space == 0x00,
+          f"{cus().hex()}, SPACE's cell ${space:02X}")
+
+    before = (cus(), m.z.memory[lb["joyidx"]])
+    hold6()
+    answer("R")
+    a1 = aval()
+    answer("F7")
+    m.run(20)
+    at_f7 = (m.screen()[0], aval() == a1)
+    answer("F5")
+    m.run(5)
+    check("F7 at a prompt does nothing; F5 gives up, the layout as it was",
+          at_f7 == (joyrow("r?---"), True) and (cus(), m.z.memory[lb["joyidx"]]) == before,
+          f"{at_f7} {cus().hex()} joyidx {m.z.memory[lb['joyidx']]}, f6old {m.z.memory[lb['f6old']]}, before {before[0].hex()} {before[1]}")
+
+    seen = []
+    for _ in range(4):
+        f6()
+        seen.append(m.z.memory[lb["joyidx"]])
+    m.keys = {C64NAMES["LSHIFT"], C64NAMES["F5"]}
+    m.run(20)
+    m.keys = set()
+    m.run(10)
+    short = (m.z.memory[lb["joyidx"]], m.screen()[0])
+    check("F6 switches 5678+0 and the custom layout once taught; a short hold is a tap",
+          seen == [0, 1, 0, 1] and short == (0, joyrow("76580")), f"{seen} {short}")
+
+    hold6()                                      # the stick at a prompt is no answer
+    for joy in ({"up"}, {"fire"}):
+        m.joy = joy
+        m.run(10)
+        m.joy = set()
+        m.run(5)
+    at_u = (m.z.memory[lb["teaching"]], m.screen()[0])
+    answer("F1")
+    m.joy = {"down"}
+    m.run(10)
+    m.joy = set()
+    m.run(5)
+    at_d = m.screen()[0]
+    answer("F5")
+    check("the stick at a teaching prompt answers nothing and gives up nothing (nor repeats F1)",
+          at_u == (1, joyrow("?----")) and at_d == joyrow("-?---"), f"{at_u} {at_d!r}")
+    m.keys = {C64KEY[ZXKEY["SPACE"]]}            # BREAK
+    m.until(lambda: m.z.memory[0x4000] != 0xFF, 200, "BREAK")
+    m.keys = set()
+    m.until(m.ready, 300, "the key wait")
+    m.type("SHIFT+0")                            # (RUBOUT: an empty edit line)
+    hold6()
+    for k in ("R", "F", "J", "K", "L"):
+        answer(k)
+    m.until(m.ready, 300, "the key wait")
+    m.run(10)
+    check("teaching at the K cursor: nothing it took reaches the edit line", m.screen()[22:] in (["", "k"], ["k", ""]),
+          f"{m.screen()[22:]}")
 
     # ---- the test programs (progs/*.bas, made into .p files by make)
     m = Machine(int_wired=True)
@@ -2000,6 +2385,25 @@ def main():
         ok, r = False, str(e).splitlines()[0]
     check("no /INT: RAND USR 8192 (Mazogs's ZXpand SAVE) runs the IRQ handler; the key wait still "
           "works after it", ok and not m.z.memory[m.lbl["irqseen"]], r)
+
+    m = Machine(int_wired=False)                 # F5 in a running program, twice
+    m.boot()
+    m.drive.files[b"ZX64MON"] = mon
+    m.drive.files[b"ZX64MON2"] = mon2
+    for line in ("5 L A SHIFT+L 0", "1 0 L A SHIFT+L A SHIFT+K 1", "2 0 G 1 0"):
+        m.type(line + " NEWLINE")                # 5 LET A=0, 10 LET A=A+1, 20 GOTO 10
+    m.type("R")
+    m.keys = {C64KEY[ZXKEY["NEWLINE"]]}
+    m.run(3)
+    m.keys = set()
+    m.run(30)
+    seen = []
+    for _ in range(2):
+        m.tap("F5", frames=60)
+        seen.append(m.z.memory[0xC018] == 0x14)
+        m.mtype("X\r", settle=30)
+    check("no /INT: F5 stops a running program, X lets it go on, and F5 does it again", seen == [True, True],
+          f"{seen}")
 
     fell = [i for i, mm in enumerate(Machine.all) if mm.int_wired and mm.irqs and not mm.z.memory[mm.lbl["irqseen"]]]
     check("with /INT, the key wait never gave up on the IRQ in all of the above", not fell, f"{fell}")

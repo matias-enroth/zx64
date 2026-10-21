@@ -74,7 +74,16 @@ def keymap_inc():
     return "\n".join(out) + "\n"
 
 
-def zx2pet_inc():
+def kshift_inc():
+    """The ZX81 keys a C64 key presses with SHIFT (DEL is SHIFT 0): (ZX81 row,
+    key bit, C64 column, C64 row bit) each, 0 at the end. The type-ahead
+    gives such a key SHIFT only while that C64 key is down."""
+    out = [f"        db ${keys[1][0]:02X}, ${1 << keys[1][1]:02X}, {pa}, ${1 << pb:02X}"
+           for (pa, pb), keys in KEYMAP if len(keys) == 2 and keys[0] == (0xFE, 0)]
+    return "\n".join(out) + "\n        db 0\n"
+
+
+def zx2pet():
     """ZX81 character codes 0-63 -> PETSCII, for file names."""
     t = [ord('_')] * 64                     # graphics: PETSCII left arrow
     t[0] = ord(' ')
@@ -84,7 +93,14 @@ def zx2pet_inc():
         t[28 + i] = ord('0') + i
     for i in range(26):
         t[38 + i] = ord('A') + i
-    return "".join(f"        db ${v:02X}\n" for v in t)
+    return t
+
+
+def zx2pet_inc():
+    """zx2pet() for codes 0-27: setname works out the digits and letters."""
+    t = zx2pet()
+    assert all(t[c] == c + 20 for c in range(28, 38)) and all(t[c] == c + 27 for c in range(38, 64))
+    return "".join(f"        db ${v:02X}\n" for v in t[:28])
 
 
 # The C64 keyboard matrix (column = PA bit, row = PB bit), for the
@@ -145,7 +161,24 @@ MESSAGES = [
     ("msg_col3", "AMBER SCREEN", "F2"),
     ("msg_col4", "BLACK ON GREEN", "F2"),
     ("msg_col5", "C64 COLOURS", "F2"),
+    ("msg_joy", "JOYSTICK  U- D- L- R- F-", "F6"),   # joyshow fills in the keys
 ]
+
+
+# The joystick's keys on the top row (joyshow): one character a ZX81 key,
+# 5 a row in the row selects' order $FE $FD $FB $F7 $EF $DF $BF $7F, then
+# one for none. Inverse as the message is, but SHIFT, NEWLINE and SPACE
+# plain (S, N, a space), so they stand out from the S and N keys.
+KEYROWS = [["SHIFT", "Z", "X", "C", "V"], list("ASDFG"), list("QWERT"), list("12345"),
+           list("09876"), list("POIUY"), ["NEWLINE", "L", "K", "J", "H"], ["SPACE", ".", "M", "N", "B"]]
+
+
+def keychr_inc():
+    plain = {"SHIFT": "S", "NEWLINE": "N", "SPACE": " "}
+    codes = [CHARS[plain[k]] if k in plain else CHARS[k] | 0x80 for row in KEYROWS for k in row]
+    codes.append(CHARS["-"] | 0x80)
+    return "keychr:\n" + "".join(f"        db {', '.join(f'${c:02X}' for c in codes[i:i + 8])}\n"
+                                 for i in range(0, len(codes), 8))
 
 
 # Words for the top row while the 6510 loads or saves (lstat): 8 ZX81
@@ -154,17 +187,34 @@ WORDS = [("txt_load", "LOADING "), ("txt_save", "SAVING  "), ("txt_mon", "ZX64MO
 
 
 def msgs_inc():
-    """Each message as 32 ZX81 characters, inverse: " text ... key "."""
+    """Each message kept short, ZX81 characters, inverse: its text's length
+    and text, then its key's digit (F and the digit; 0: no key). zx64's msgx
+    makes the top row of it, " text ... key ", 32 characters."""
     out = []
     for label, text, key in MESSAGES:
-        line = f" {text}".ljust(29 - len(key)) + f"  {key} "
-        assert len(line) == 32, line
+        assert len(f" {text}".ljust(29 - len(key)) + f"  {key} ") == 32, text
+        assert key == "" or (len(key) == 2 and key[0] == "F"), key
         out.append(f"{label}:")
-        out.append("        db " + ",".join(f"${CHARS[c] | 0x80:02X}" for c in line))
+        out.append("        db " + ",".join([str(len(text))] + [f"${CHARS[c] | 0x80:02X}" for c in text]
+                                         + [f"${CHARS[key[1]] | 0x80:02X}" if key else "0"]))
     for label, word in WORDS:
         assert len(word) == 8, word
         out.append(f"{label}:")
         out.append("        db " + ",".join(f"${CHARS[c] | 0x80:02X}" for c in word))
+    return "\n".join(out) + "\n"
+
+
+# Why F7 or F3 didn't read the ROM again: the 6510 puts one on the top row.
+ROMMSGS = [("rm_none", "ROM NOT RELOADED: NO ZX81"), ("rm_err", "ROM NOT RELOADED: DISK ERROR"),
+           ("rm_other", "ROM NOT RELOADED: OTHER ZX81"), ("rm_z64t", "ZX64 CHANGED: LOAD IT AGAIN")]
+
+
+def romsg_a():
+    """ROMMSGS for c64/boot.asm (acme): ZX81 characters, inverse, 0 ended."""
+    out = ["rmsgs:"]
+    for label, text in ROMMSGS:
+        assert len(text) <= 30, text
+        out.append(f"{label}: !byte " + ",".join(f"${CHARS[c] | 0x80:02X}" for c in text) + ",0")
     return "\n".join(out) + "\n"
 
 
@@ -219,8 +269,10 @@ def main():
 
     os.makedirs(BUILD, exist_ok=True)
     open(os.path.join(BUILD, "keymap.inc"), "w").write(keymap_inc())
+    open(os.path.join(BUILD, "kshift.inc"), "w").write(kshift_inc())
     open(os.path.join(BUILD, "zx2pet.inc"), "w").write(zx2pet_inc())
     open(os.path.join(BUILD, "msgs.inc"), "w").write(msgs_inc())
+    open(os.path.join(BUILD, "keychr.inc"), "w").write(keychr_inc())
     open(os.path.join(BUILD, "rom.inc"), "w").write(   # the K-GRAPH byte zx64 borrows
         f"KALL_ROM: equ ${rom[0x00FE]:02X}\n")
     z80bin = os.path.join(BUILD, "zx64.bin")
@@ -266,11 +318,14 @@ def main():
         rom[addr:addr + len(new)] = bytes(new)
     if bad:
         sys.exit("this ROM doesn't have the code zx64 patches:\n" + "\n".join(bad))
-    o = sym["romsum_v"] - 0x2000                  # the patched ROM's sum, for F7's and F3's check
-    blob[o:o + 2] = (sum(rom[5:0x2000]) & 0xFFFF).to_bytes(2, "little")
+    rsum = sum(rom[5:0x2000]) & 0xFFFF            # the patched ROM's sum, for F7's and F3's check
+    o = sym["romsum_v"] - 0x2000
+    blob[o:o + 2] = rsum.to_bytes(2, "little")
 
     bootbin = os.path.join(BUILD, "boot.bin")
-    run(ACME, "-f", "plain", "-o", bootbin, os.path.join(ROOT, "c64", "boot.asm"))
+    open(os.path.join(BUILD, "romsg.a"), "w").write(romsg_a())
+    run(ACME, "-f", "plain", "-I", BUILD, f"-DROMSUM={rsum}", f"-DROMSUMV={sym['romsum_v'] + 0x1000}",
+        f"-DMSGBUF={sym['msgbuf'] + 0x1000}", "-o", bootbin, os.path.join(ROOT, "c64", "boot.asm"))
     boot = open(bootbin, "rb").read()
 
     mem = bytearray(0x4000)                       # C64 $0000-$3FFF

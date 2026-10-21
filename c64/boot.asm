@@ -517,14 +517,26 @@ more:   sec
 mtab:   !word doprg-1, dodir-1, dodirl-1, dodirc-1, dowrite-1, docmd-1, dorom-1
 
 ; The ZX81 ROM again, when a program has written over it (F7 or F3): the boot
-; file named in the mailbox, its bytes for C64 $1000-$2FFF, skipping the
-; load address and the loader before them. The bar across all of it.
+; file named in the mailbox, its bytes for Z80 $0000-$1FFF, skipping the
+; load address and the loader before them. The bar across all of it. Read
+; into the ZX81's RAM first (the reset clears it anyway), clear of the
+; Z80's stack, and copied into place only if its sum is this build's
+; (ROMSUM, as romsum_v): a boot file from another build would jump into
+; zx64 at the wrong places. If not: why, on the top row (rmsg), ST_ERR.
 dorom:  lda #$36
         sta $01
-        jsr tryopen             ; (it reads the load address's first byte)
-        bcc +
-        jmp notfound
-+       lda #<$2800             ; $0800 to skip, $2000 to keep
+        jsr rchk                ; zx64's own copy of the sum changed: zx64
+        beq +                   ; itself was written over, which no ROM
+        ldx #rm_z64t-rmsgs      ; from the disk puts right
+rm_st:  jsr rmsg
+        lda #ST_ERR
+        sta MB+1
+        jmp done
++       jsr tryopen             ; (it reads the load address's first byte)
+        ldx #rm_none-rmsgs
+        bcs rm_st
+        jsr rpick
+        lda #<$2800             ; $0800 to skip, $2000 to keep
         sta tot
         lda #>$2800
         sta tot+1
@@ -542,7 +554,7 @@ rskip:  jsr CHRIN
         lda PTR
         ora PTR+1
         bne rskip
-        lda #$10                ; PTR = $1000 (its low byte is 0)
+        lda rbuf                ; PTR = the buffer (its low byte is 0)
         sta PTR+1
 rrom:   jsr CHRIN
         ldy #0
@@ -550,15 +562,20 @@ rrom:   jsr CHRIN
         jsr pstep
         inc PTR
         bne rrom
-        inc PTR+1
-        lda PTR+1
-        cmp #$30
+        jsr rend8k
         bne rrom
         jsr READST
         and #$83                ; a time-out or no device: it may be wrong
         beq +
-        jmp rerr
-+       jmp rok
+        ldx #rm_err-rmsgs
+        bne rm_bad
++       jsr rsum
+        beq +
+        ldx #rm_other-rmsgs
+rm_bad: jsr rmsg
+        jmp rerr                ; (closes the file)
++       jsr rcopy
+        jmp rok
 
 ; A PRG file, the name in the mailbox, to the C64 address its first two
 ; bytes give (the monitor itself: zx64mon to $4000, zx64mon2 to $F000),
@@ -768,6 +785,75 @@ rdb:    jsr CHRIN               ; a byte, ST kept in st; flags as A
         pla
         rts
 
+; dorom's: inc PTR+1; Z once PTR has gone past the buffer's 8K.
+rend8k: inc PTR+1
+        lda PTR+1
+        sec
+        sbc rbuf
+        cmp #$20
+        rts
+
+; Z if the buffer's bytes from 5 on add up to ROMSUM (as romsum in
+; z80/zx64.asm: $0000-$0004 are the calculator's).
+rsum:   lda #5
+        sta PTR
+        lda rbuf
+        sta PTR+1
+        lda #0
+        sta acc
+        sta acc+1
+        tay
+-       lda (PTR),y
+        clc
+        adc acc
+        sta acc
+        bcc +
+        inc acc+1
++       inc PTR
+        bne -
+        jsr rend8k
+        bne -
+rs_cmp: lda acc
+        cmp #<ROMSUM
+        bne +
+        lda acc+1
+        cmp #>ROMSUM
++       rts
+
+; Z if romsum_v, zx64's copy of the sum, is still this build's.
+rchk:   lda ROMSUMV
+        sta acc
+        lda ROMSUMV+1
+        sta acc+1
+        jmp rs_cmp
+
+; The buffer for dorom: Z80 $4000, or $6000 if the Z80's stack is in
+; that 8K (its SP as it handed over, and the bytes above it).
+rpick:  ldx #$50
+        lda SPZ80+1
+        cmp #$3f
+        bcc +
+        cmp #$60
+        bcs +
+        ldx #$70
++       stx rbuf
+        rts
+
+; X: a message (rmsgs): MSGBUF as the top row, the text from column 1.
+rmsg:   ldy #31
+        lda #$80                ; inverse spaces
+-       sta MSGBUF,y
+        dey
+        bpl -
+        iny
+-       lda rmsgs,x
+        beq +
+        sta MSGBUF+1,y
+        inx
+        iny
+        bne -
++       rts
+
 !if * > $0efe { !error "6510 code overflows into $0EFE, where the Z80 puts a keyboard row (IN A,($FE), A = $FE)" }
 
 *= $0f00
@@ -814,5 +900,29 @@ dcbad:  jsr CLRCHN
         lda #ST_ERR
         sta MB+1
         jmp done
+
+        !source "romsg.a"       ; rmsgs, dorom's messages (tools/build.py)
+rbuf:   !byte 0                 ; dorom's buffer, its high byte (C64)
+
+; dorom's: the buffer's 8K to the ROM's place.
+DST     = $fd
+rcopy:  lda #0
+        sta PTR
+        sta DST
+        lda rbuf
+        sta PTR+1
+        lda #>ZXROM
+        sta DST+1
+        ldx #$20
+        tay
+-       lda (PTR),y
+        sta (DST),y
+        iny
+        bne -
+        inc PTR+1
+        inc DST+1
+        dex
+        bne -
+        rts
 
 !if * > $1000 { !error "6510 code overflows into the Z80 image at $1000" }
