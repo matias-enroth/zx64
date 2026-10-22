@@ -74,8 +74,8 @@ Sources:
   the picture changes only there. **make test, hardware**. Once an IRQ
   has arrived it waits for IRQs instead, until it sees the flag still set
   on two reads in a row (no IRQ took it), and polls again. **make test**
-- Without the cartridge, the write to `$DE00` does nothing; the boot
-  file sees the Z80 never started (`$4000` unchanged) and returns to
+- Without the cartridge, the write to `$DE00` does nothing; zx64's
+  loader sees the Z80 never started (`$4000` unchanged) and returns to
   BASIC with a message. **VICE, hardware**
 
 ### The `/INT` wire
@@ -83,8 +83,7 @@ Sources:
 Connect expansion port pin 4 (`/IRQ`) to Z80 pin 16 (`/INT`). On the
 replica, R6 and the C64's 3k3 pull-up share the line (~1.3k), which the
 VIC and CIAs still pull low; R6 can stay. **hardware** (test hooks):
-Mazogs animates and plays through. Push the cartridge fully home;
-half-seated, the picture froze and keys came and went.
+Mazogs animates and plays through.
 
 <p align="center"><img src="img/cpm-cart-mods.jpg" width="70%" alt="The DL2DW CP/M cartridge, component side, edge connector down, marked: 1 Z80 pin 16 (/INT), 2 port pin 4 (/IRQ) with the wire's route between them, 3 U5 pin 9, 4 U5 pin 14 (+5 V), 5 U5 pin 7 (GND)"></p>
 
@@ -120,6 +119,13 @@ with a test hook, which is enough (right).
                   LED
 ```
 
+U5 is the middle chip of the top row in the marked photo (its label is
+hidden; the position is from the replica's PCB file), pins marked 3-5.
+Notch down: pins 1-7 up the right row, 8-14 down the left. Check with a meter
+(ground on pin 7): pin 9 high at `READY.`, below 0.4 V with zx64
+running. On another board, use the flip-flop output that is low while
+`/DMA` is.
+
 Only one way round works: the LED's long leg (its anode) towards pin 14,
 +5 V. Reversed, it stays dark (no harm done). Which side of the LED the
 resistor sits on doesn't matter.
@@ -128,7 +134,7 @@ U5 pin 9 is low while the Z80 has the bus and sinks 2-3 mA (a 74LS74
 output takes 8 mA). The LED is lit while zx64 runs and off while the
 6510 does disk I/O or sits at `READY.`; bad lines don't affect it.
 **hardware**: leads pushed into U5's socket beside the chip, no
-soldering; out during `LOAD`.
+soldering.
 
 <p align="center">
   <img src="img/mod-led-parts.jpg" width="49%" alt="A red LED with a 1 kΩ resistor soldered to one leg and a wire extending the other">
@@ -138,13 +144,6 @@ soldering; out during `LOAD`.
 In the right photo U5 lies on its side: pins 8-14 run along the lower
 row from left to right, so the resistor's lead is at pin 9 (2nd from the
 left) and the LED's leg at pin 14 (the right end).
-
-U5 is the middle chip of the top row in the marked photo (its label is
-hidden; the position is from the replica's PCB file), pins marked 3-5.
-Notch down: pins 1-7 up the right row, 8-14 down the left. Check with a meter
-(ground on pin 7): pin 9 high at `READY.`, below 0.4 V with zx64
-running. On another board, use the flip-flop output that is low while
-`/DMA` is.
 
 ## Clock
 

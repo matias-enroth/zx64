@@ -122,10 +122,10 @@ def shot(m, name):
 def machine():
     m = Shot(int_wired=True)
     m.ram[0x02A6] = 1                                     # the kernal's PAL flag
-    for f in glob.glob(os.path.join(ROOT, "build", "*.p")) + glob.glob(os.path.join(ROOT, "games", "*.p")):
+    for f in glob.glob(os.path.join(ROOT, "build", "obj", "*.p")) + glob.glob(os.path.join(ROOT, "games", "*.p")):
         m.drive.files[os.path.basename(f)[:-2].upper().encode()] = open(f, "rb").read()
     for f in ("zx64mon", "zx64mon2", "zx81"):
-        m.drive.files[f.upper().encode()] = open(os.path.join(ROOT, "build", f + ".prg"), "rb").read()
+        m.drive.files[f.upper().encode()] = open(os.path.join(ROOT, "build", "obj", f + ".prg"), "rb").read()
     return m
 
 

@@ -70,7 +70,7 @@ MBOX:    equ $2F00              ; +0 command, +1 status, +2 name length, +3 name
 CMD_LOAD: equ 1
 CMD_SAVE: equ 2
 CMD_PRG: equ 3                  ; a PRG file to its own load address
-CMD_ROM: equ 9                  ; the ROM again, from the boot file
+CMD_ROM: equ 9                  ; the ROM again, from ZX64
 MON:     equ $3000              ; zx64mon: JP its entry, then "ZM" (C64 $4000)
 MON2:    equ $E000              ; zx64mon2, its second part: "M2" (C64 $F000)
 ST_TOOBIG: equ 2                ; mailbox status: 0 ok, 1 not found or disk error, 2 too big,
@@ -733,18 +733,12 @@ sc_col: ld a,b
         ld a,(teaching)         ; teaching: the F-keys are its own
         or a
         jp nz,f5_done
-        ld a,(cmat)             ; F7 (column 0, row 3): reset the ZX81
-        and $08
-        jr nz,sc_f3
+        ld a,(cmat)             ; F7 (column 0, row 3): reset the ZX81; with
+        and $08                 ; SHIFT it is F8, the next memory size
+        jr nz,sc_f1
         ld c,$08
         call held
-        jp z,reset
-sc_f3:  ld a,(cmat)             ; F3 (row 5): the next memory size
-        and $20
-        jr nz,sc_f1
-        ld c,$20
-        call held
-        jp z,memsize
+        jp z,f7go
 sc_f1:  ld hl,f1down            ; F1 (column 0, row 4), as it goes down:
         ld a,(cmat)             ; type-ahead on or off
         and $10
@@ -770,44 +764,47 @@ f1_show:
         jr f1_done
 f1_up:  ld (hl),0
 f1_done:
-        ld a,(cmat)             ; F5 (column 0, row 6), as it goes down:
-        and $40                 ; the monitor, at the next chance (monreq).
-        ld hl,f5down            ; With SHIFT it is F6: the next joystick
-        jr nz,f5_up             ; layout, and held a second, teaching one
-        or (hl)
+        ld a,(cmat)             ; F5 (column 0, row 6), as it goes down: the
+        cpl                     ; monitor, at the next chance (monreq). F3
+        and $60                 ; (row 5): the next joystick layout, and held
+        ld hl,f5down            ; a second, teaching one
+        jr z,f5_up
+        ld b,a
+        ld a,(hl)
+        or a
         jr nz,f5_held
-        ld c,$40
+        ld c,b
         call held
         jr nz,f5_done
         inc (hl)
-        call shifted
-        jr z,f6_down
+        bit 5,b
+        jr nz,f3_down
         xor a
-        ld (f6on),a
+        ld (f3on),a
         inc a
         ld (monreq),a
         jr f5_done
-f6_down:
+f3_down:
         ld a,(joyidx)           ; (put back if teaching is given up)
-        ld (f6old),a
+        ld (f3old),a
         call joynext
         ld a,(tick)
-        ld (f6t0),a
+        ld (f3t0),a
         ld a,1
-        ld (f6on),a
+        ld (f3on),a
         jr f5_done
 f5_held:
-        ld a,(f6on)             ; F6 still down: a second of it?
+        ld a,(f3on)             ; F3 still down: a second of it?
         dec a
         jr nz,f5_done
-        ld a,(f6t0)
+        ld a,(f3t0)
         ld b,a
         ld a,(tick)
         sub b
         cp 50
         jr c,f5_done
         ld a,2
-        ld (f6on),a
+        ld (f3on),a
         ld (monreq),a           ; teaching, at the next chance (mon_go)
         jr f5_done
 f5_up:  ld (hl),0
@@ -870,7 +867,7 @@ cr_up:  bit 7,a
         set 4,(hl)              ; not 6 (down)...
         res 3,(hl)              ; ...but 7 (up)
 cr_done:
-        ld a,(cmat)             ; F5 or F6 down: no SHIFT for the program
+        ld a,(cmat)             ; F5 down (SHIFT+F5 too): no SHIFT for the program
         and $40
         jr nz,cr_stick
         ld hl,KPAGE+$FE
@@ -1063,7 +1060,7 @@ jo_next:
         jr nz,jo_ent
         ret
 
-; F6: the other layout, 5678+0 or the taught one if there is one, shown
+; F3: the other layout, 5678+0 or the taught one if there is one, shown
 ; on the top row by its keys.
 joynext:
         ld a,(joyhave)
@@ -1102,11 +1099,11 @@ js_key: push bc
         djnz js_key
         ret
 
-; Hold F6 (from mon_go, interrupts off, the program frozen): the top row
+; Hold F3 (from mon_go, interrupts off, the program frozen): the top row
 ; asks for each of the stick's keys in turn, the layout so far with a ? at
 ; the one asked. The first key down other than SHIFT is the answer (a C64
 ; cursor key: its key without SHIFT), or SHIFT alone; F1: none; F5: give
-; up, the layout as before F6. Taken once all keys are up again.
+; up, the layout as before F3. Taken once all keys are up again.
 teach:  ld a,1
         ld (teaching),a
         ld hl,JTEACH            ; all none to start with
@@ -1202,13 +1199,13 @@ tc_put: ex de,hl
         dec hl
         ex de,hl
         jr tc_wait
-tc_out: ld a,(f6old)
+tc_out: ld a,(f3old)
         ld (joyidx),a
 tc_end: call tkeys
         jr nz,tc_end            ; until every key is up
         xor a
         ld (teaching),a
-        ld (f6on),a
+        ld (f3on),a
         call mirror             ; the IN A,($FE) copies all up too
         jp joyshow
 
@@ -1333,7 +1330,7 @@ shifted:
         ret
 
 ; F2 (SHIFT+F1 on a C64): the next colour scheme, as monochrome monitors
-; had them, its name on the top row. F7 and F3 keep it, and so does the
+; had them, its name on the top row. F7 and F8 keep it, and so does the
 ; monitor, which puts it back as it leaves (SETCOL).
 NSCHEMES: equ 6
 nextcol:
@@ -1392,9 +1389,20 @@ schemes:                        ; characters, background, border (C64 colours)
 ; rest, the stack too; zx64's own state is put back here. Works wherever
 ; the keyboard or BREAK is read: always in SLOW mode, and in FAST mode
 ; between BASIC statements, but not in machine code that reads no keys.
-; F3 does the same with the next memory size, 1K, 16K, 32K, as if with
+; F8 (SHIFT+F7) does the same with the next memory size, 1K, 16K, 32K, as if with
 ; another RAM pack: the ROM's RAM-FILL finds RAMTOP up to the last byte
 ; in BC (and NEW keeps it). The size is shown on the top row.
+f7brk:  ld a,$FD                ; F7 in BREAK-1, which has no fresh cmat: SHIFT
+        call cread              ; read now (the stick's ghosts aren't taken
+        and $80                 ; out, but F7 is held)
+        jr z,memsize
+        ld a,$BF
+        call cread
+        and $10
+        jr z,memsize
+        jr reset
+f7go:   call shifted            ; F8 (SHIFT+F7): the next memory size
+        jr z,memsize
 reset:  ld c,$08                ; F7's bit in column 0
         jr rs_go
 memsize:
@@ -1404,7 +1412,7 @@ memsize:
         jr c,ms_set
         xor a
 ms_set: ld (ramsize),a
-        ld c,$20                ; F3's bit
+        ld c,$08                ; F7's bit (F8 is SHIFT+F7)
 rs_go:  di
         call bp_off
         ld a,$FE
@@ -1438,7 +1446,7 @@ rs_up:  ld a,(CIA1+1)
                                 ; not JP $0000: START is overwritten (romsum)
 
 ; The ROM is RAM here, and a program's OUT to an add-on that isn't there
-; can land in it (aydemo.p's AY board: OUT ($DF),A to A*256+$DF). F7 and F3
+; can land in it (aydemo.p's AY board: OUT ($DF),A to A*256+$DF). F7 and F8
 ; check it first: its bytes from $0005 on added up (the ROM's calculator
 ; writes to $0000-$0004 itself), against the sum build.py puts in
 ; romsum_v. NZ: changed.
@@ -1462,8 +1470,8 @@ rsm2:   inc hl
 romsum_v:
         dw 0
 
-; Changed: the 6510 reads it again from the boot file, ZX81 on the disk
-; zx64 came from, with the bar on the top row (about 20 seconds), and
+; Changed: the 6510 reads it again from ZX64 (the file ZX81 loaded) on the
+; disk zx64 came from, with the bar on the top row (about 20 seconds), and
 ; puts it in place only if it is this build's ROM (dorom in c64/boot.asm).
 romfix: ld hl,txt_load
         ld de,txt_rom
@@ -1485,7 +1493,7 @@ romfix: ld hl,txt_load
         ld (ovl),a
         ret
 rom_name:
-        db 4,"ZX81"
+        db 4,"ZX64"
 
 ; "IN A,(C)" for the ROM's keyboard routine: no flags touched, the ROM
 ; relies on the carry from RLC B.
@@ -1569,7 +1577,7 @@ kb_none:                        ; no key down: what the ROM's code above
 ; program runs. The editor reads that byte only just after its key wait,
 ; which puts it back.
 ; $BFFE and $7FFE are in the ZX81's RAM range: a row goes there only if
-; that is past the RAM (F3's size), or the unused byte just under RAMTOP
+; that is past the RAM (F8's size), or the unused byte just under RAMTOP
 ; (the ROM's GO SUB end marker is at RAMTOP-1, its stack starts below
 ; RAMTOP-2). Under a lowered RAMTOP it may be a program's machine code:
 ; left alone. Keeps all registers.
@@ -1635,8 +1643,8 @@ ma_put: ld a,(kand)
         ret
 
 ; Replaces "LD A,$7F / IN A,($FE)" in BREAK-1 ($0F46). Only bit 0 (SPACE)
-; matters to the ROM: SPACE or RUN/STOP is BREAK. F7 is looked at here
-; too, so it resets a program running in FAST mode.
+; matters to the ROM: SPACE or RUN/STOP is BREAK. F7 (and F8) is looked at
+; here too, so it resets a program running in FAST mode.
 brk:    xor a                   ; a program line runs (BREAK-1 comes from
         ld (edit),a             ; NEXT-LINE): keys are the program's now
         ld a,$FE
@@ -1650,7 +1658,7 @@ brk:    xor a                   ; a program line runs (BREAK-1 comes from
         ld c,$08
         call held
         pop bc
-        jp z,reset
+        jp z,f7brk
 bk_brk: ld a,$7F
         call cread
         cp $FF
@@ -1671,27 +1679,20 @@ bk_brk: ld a,$7F
 brk_f5: push af
         push hl
         ld hl,f5down
+        and $60                 ; F5 and F3 both up
+        cp $60
+        jr z,bf_up
         and $40
-        jr nz,bf_up
+        jr nz,bf_done           ; F3: scan's, not here (f5down is its too)
         or (hl)
         jr nz,bf_done
         push bc
         ld c,$40
         call held
-        jr nz,bf_pop
-        ld a,$FD                ; SHIFT down (column 1 row 7, column 6
-        call cread              ; row 4): F6, not here
-        rla
-        jr nc,bf_pop
-        ld a,$BF
-        call cread
-        and $10
-        jr z,bf_pop
         pop bc
+        jr nz,bf_done
         inc (hl)
         call mon_call
-        jr bf_done
-bf_pop: pop bc
         jr bf_done
 bf_up:  ld a,(irqseen)          ; the IRQ scanning (SLOW, /INT): scan says
         or a                    ; when it is up, every frame (an IRQ
@@ -1868,7 +1869,7 @@ mon_go: di
         ld hl,monreq
         ld a,(hl)
         ld (hl),0
-        cp 2                    ; F6 held: teach, no monitor
+        cp 2                    ; F3 held: teach, no monitor
         jr nz,mg_mon
         call teach
         jr mon_ret
@@ -1980,7 +1981,7 @@ bh_di:  ld hl,10
         jp mon_go
 
 ; Every breakpoint's byte back, and none armed. The monitor does it as
-; it is entered; LOAD and F7/F3 too, so no $FF stays behind.
+; it is entered; LOAD and F7/F8 too, so no $FF stays behind.
 bp_off: push hl
         push bc
         ld a,(bpcnt)
@@ -2020,9 +2021,9 @@ monreq:   db 0                  ; F5 pressed: the monitor at the next chance
 moniff:   db 0                  ; the monitor goes back with interrupts on
 monwhy:   db 0                  ; 0 F5, 1 a breakpoint
 bpcnt:    db 0                  ; the monitor's breakpoints armed (bptab)
-ramsize:  db 1                  ; 0 1K, 1 16K, 2 32K (F3; F7 keeps it)
+ramsize:  db 1                  ; 0 1K, 1 16K, 2 32K (F8; F7 keeps it)
 scheme:   db 0                  ; the colours (F2; F7 keeps them)
-joyidx:   db 0                  ; the stick's layout, 0 5678+0, 1 taught (F6; F7 keeps it)
+joyidx:   db 0                  ; the stick's layout, 0 5678+0, 1 taught (F3; F7 keeps it)
 joyhave:  db 0                  ; a custom layout has been taught
 jnow:     db $FF                ; the stick at this scan (jread)
 jprev:    db $FF                ; at the last one (jmerge)
@@ -2030,11 +2031,11 @@ jlast:    db $FF                ; the entry KEYBOARD gets, $FF none
 jmulti:   db 0                  ; more than one stick key down (jone)
 joylays:                        ; up, down, left, right, fire (see jread)
         db $EF,$F7, $EF,$EF, $F7,$EF, $EF,$FB, $EF,$FE  ; 7 6 5 8 0
-joycus: db $FE,$FF, $FE,$FF, $FE,$FF, $FE,$FF, $FE,$FF  ; taught (hold F6)
-f6on:     db 0                  ; F5 down as F6: 1, held a second: 2
-f6t0:     db 0                  ; tick as F6 went down
-f6old:    db 0                  ; joyidx before it
-teaching: db 0                  ; hold F6 is asking for keys
+joycus: db $FE,$FF, $FE,$FF, $FE,$FF, $FE,$FF, $FE,$FF  ; taught (hold F3)
+f3on:     db 0                  ; F3 down: 1, held a second: 2
+f3t0:     db 0                  ; tick as F3 went down
+f3old:    db 0                  ; joyidx before it
+teaching: db 0                  ; hold F3 is asking for keys
         include "keychr.inc"
 hello:    db 1                  ; the version not shown yet
 ramtops:  dw $43FF,$7FFF,$BFFF  ; the last byte of RAM for each

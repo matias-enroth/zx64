@@ -3,10 +3,13 @@
 
     tools/build.py rom/zx81.rom [game.p ...]
 
-Writes, in build/:
-  zx81.prg   the boot file: the 6510 loader at $0801, your ROM (patched)
-             at $1000 and the Z80 code at $3000 (Z80 $0000 and $2000)
-  zx64.d64   the boot file, the monitor (zx64mon, zx64mon2), the test
+Writes build/zx64.d64, and the rest in build/obj/:
+  zx81.prg   the boot file: a stub (c64/stub.asm) that loads zx64.prg,
+             and on a JiffyDOS drive the monitor too, and starts it
+  zx64.prg   the 6510 loader at $0801, your ROM (patched) at $1000, the
+             Z80 code at $3000 (Z80 $0000 and $2000) and the JiffyDOS
+             reader at $3E00 (start puts it in place)
+  zx64.d64   the boot file and zx64, the monitor (zx64mon, zx64mon2), the test
              programs (progs/*.bas, made into .p files here) and the .p
              files given, as plain PRGs
   zx64mon.prg, zx64mon2.prg  the monitor's two parts (C64 $4000, $F000)
@@ -34,6 +37,7 @@ sys.path.insert(0, os.path.join(ROOT, "tools"))
 from zxbasic import CHARS, p_file  # noqa: E402
 import pcheck  # noqa: E402
 BUILD = os.path.join(ROOT, "build")
+OBJ = os.path.join(BUILD, "obj")                # everything but the d64
 ZX81_MD5 = "db398d4e4e93a6d4dee3bfe146918219"   # the standard ("improved") ROM
 
 Z80ASM = os.environ.get("Z80ASM", "z80asm")
@@ -145,12 +149,12 @@ def monkeys_inc():
 VERSION = "1.0"
 
 # The settings' messages, shown on the top row: the text, then the key.
-# msg_1k, msg_16k and msg_32k must follow each other (F3 counts on it), and
+# msg_1k, msg_16k and msg_32k must follow each other (F8 counts on it), and
 # so must msg_col0-5 (F2).
 MESSAGES = [
-    ("msg_1k", "1K RAM", "F3"),
-    ("msg_16k", "16K RAM", "F3"),
-    ("msg_32k", "32K RAM", "F3"),
+    ("msg_1k", "1K RAM", "F8"),
+    ("msg_16k", "16K RAM", "F8"),
+    ("msg_32k", "32K RAM", "F8"),
     ("msg_kbon", "TYPE-AHEAD ON", "F1"),
     ("msg_kboff", "TYPE-AHEAD OFF, AS A ZX81", "F1"),
     ("msg_nomon", "NO ZX64MON ON THE DISK", "F5"),
@@ -161,7 +165,7 @@ MESSAGES = [
     ("msg_col3", "AMBER SCREEN", "F2"),
     ("msg_col4", "BLACK ON GREEN", "F2"),
     ("msg_col5", "C64 COLOURS", "F2"),
-    ("msg_joy", "JOYSTICK  U- D- L- R- F-", "F6"),   # joyshow fills in the keys
+    ("msg_joy", "JOYSTICK  U- D- L- R- F-", "F3"),   # joyshow fills in the keys
 ]
 
 
@@ -204,9 +208,9 @@ def msgs_inc():
     return "\n".join(out) + "\n"
 
 
-# Why F7 or F3 didn't read the ROM again: the 6510 puts one on the top row.
-ROMMSGS = [("rm_none", "ROM NOT RELOADED: NO ZX81"), ("rm_err", "ROM NOT RELOADED: DISK ERROR"),
-           ("rm_other", "ROM NOT RELOADED: OTHER ZX81"), ("rm_z64t", "ZX64 CHANGED: LOAD IT AGAIN")]
+# Why F7 or F8 didn't read the ROM again: the 6510 puts one on the top row.
+ROMMSGS = [("rm_none", "ROM NOT RELOADED: NO ZX64"), ("rm_err", "ROM NOT RELOADED: DISK ERROR"),
+           ("rm_other", "ROM NOT RELOADED: OTHER ZX64"), ("rm_z64t", "ZX64 CHANGED: LOAD IT AGAIN")]
 
 
 def romsg_a():
@@ -267,31 +271,31 @@ def main():
     if hashlib.md5(rom).hexdigest() != ZX81_MD5:
         print(f"note: {rom_path} is not the standard ZX81 ROM; checking the patch places")
 
-    os.makedirs(BUILD, exist_ok=True)
-    open(os.path.join(BUILD, "keymap.inc"), "w").write(keymap_inc())
-    open(os.path.join(BUILD, "kshift.inc"), "w").write(kshift_inc())
-    open(os.path.join(BUILD, "zx2pet.inc"), "w").write(zx2pet_inc())
-    open(os.path.join(BUILD, "msgs.inc"), "w").write(msgs_inc())
-    open(os.path.join(BUILD, "keychr.inc"), "w").write(keychr_inc())
-    open(os.path.join(BUILD, "rom.inc"), "w").write(   # the K-GRAPH byte zx64 borrows
+    os.makedirs(OBJ, exist_ok=True)
+    open(os.path.join(OBJ, "keymap.inc"), "w").write(keymap_inc())
+    open(os.path.join(OBJ, "kshift.inc"), "w").write(kshift_inc())
+    open(os.path.join(OBJ, "zx2pet.inc"), "w").write(zx2pet_inc())
+    open(os.path.join(OBJ, "msgs.inc"), "w").write(msgs_inc())
+    open(os.path.join(OBJ, "keychr.inc"), "w").write(keychr_inc())
+    open(os.path.join(OBJ, "rom.inc"), "w").write(   # the K-GRAPH byte zx64 borrows
         f"KALL_ROM: equ ${rom[0x00FE]:02X}\n")
-    z80bin = os.path.join(BUILD, "zx64.bin")
-    lbl = os.path.join(BUILD, "zx64.lbl")
-    run(Z80ASM, "-I", BUILD, "-o", z80bin, f"--label={lbl}", os.path.join(ROOT, "z80", "zx64.asm"))
+    z80bin = os.path.join(OBJ, "zx64.bin")
+    lbl = os.path.join(OBJ, "zx64.lbl")
+    run(Z80ASM, "-I", OBJ, "-o", z80bin, f"--label={lbl}", os.path.join(ROOT, "z80", "zx64.asm"))
     sym = labels(lbl)
     blob = bytearray(open(z80bin, "rb").read())
 
     # the monitor, zx64mon: two PRGs, for C64 $4000 and $F000 (Z80 $3000
     # and $E000), which zx64 loads the first time F5 is pressed
-    open(os.path.join(BUILD, "core.inc"), "w").write(
+    open(os.path.join(OBJ, "core.inc"), "w").write(
         f"MON_RET: equ ${sym['mon_ret']:04X}\nMONIFF: equ ${sym['moniff']:04X}\n"
         f"NOTBAD: equ ${sym['notbad']:04X}\nCREAD: equ ${sym['cread']:04X}\n"
         + "".join(f"{n.upper()}: equ ${sym[n]:04X}\n" for n in ("bp_off", "bpcnt", "bptab", "monwhy",
                                                                   "call6510", "mbox", "setcol", "ghosty")))
-    open(os.path.join(BUILD, "version.inc"), "w").write(f'verstr: db "{VERSION}",0\n')
-    open(os.path.join(BUILD, "monkeys.inc"), "w").write(monkeys_inc())
-    monbin, monlbl = os.path.join(BUILD, "zx64mon.bin"), os.path.join(BUILD, "zx64mon.lbl")
-    run(Z80ASM, "-I", BUILD, "-o", monbin, f"--label={monlbl}", os.path.join(ROOT, "z80", "mon.asm"))
+    open(os.path.join(OBJ, "version.inc"), "w").write(f'verstr: db "{VERSION}",0\n')
+    open(os.path.join(OBJ, "monkeys.inc"), "w").write(monkeys_inc())
+    monbin, monlbl = os.path.join(OBJ, "zx64mon.bin"), os.path.join(OBJ, "zx64mon.lbl")
+    run(Z80ASM, "-I", OBJ, "-o", monbin, f"--label={monlbl}", os.path.join(ROOT, "z80", "mon.asm"))
     monall = open(monbin, "rb").read()                # both parts, packed
     msym = labels(monlbl)
     n1 = msym["part1end"] - 0x3000
@@ -302,9 +306,9 @@ def main():
         sys.exit(f"the monitor's part 2 ends at ${msym['monend']:04X}: into the vectors at $EFFA")
     o = sym["monsz"] - 0x2000                     # their sizes into zx64, for the bar
     blob[o:o + 4] = len(mon).to_bytes(2, "little") + len(mon2).to_bytes(2, "little")
-    monprg = os.path.join(BUILD, "zx64mon.prg")
+    monprg = os.path.join(OBJ, "zx64mon.prg")
     open(monprg, "wb").write(bytes([0x00, 0x40]) + mon)       # C64 $4000
-    monprg2 = os.path.join(BUILD, "zx64mon2.prg")
+    monprg2 = os.path.join(OBJ, "zx64mon2.prg")
     open(monprg2, "wb").write(bytes([0x00, 0xF0]) + mon2)     # C64 $F000
     if 0x2000 + len(blob) > 0x2E00:
         sys.exit(f"Z80 code is {len(blob)} bytes: it runs into the keyboard page at $2E00")
@@ -318,13 +322,18 @@ def main():
         rom[addr:addr + len(new)] = bytes(new)
     if bad:
         sys.exit("this ROM doesn't have the code zx64 patches:\n" + "\n".join(bad))
-    rsum = sum(rom[5:0x2000]) & 0xFFFF            # the patched ROM's sum, for F7's and F3's check
+    rsum = sum(rom[5:0x2000]) & 0xFFFF            # the patched ROM's sum, for F7's and F8's check
     o = sym["romsum_v"] - 0x2000
     blob[o:o + 2] = rsum.to_bytes(2, "little")
 
-    bootbin = os.path.join(BUILD, "boot.bin")
-    open(os.path.join(BUILD, "romsg.a"), "w").write(romsg_a())
-    run(ACME, "-f", "plain", "-I", BUILD, f"-DROMSUM={rsum}", f"-DROMSUMV={sym['romsum_v'] + 0x1000}",
+    jcorebin = os.path.join(OBJ, "jcore.bin")   # the JiffyDOS reader, at $3E00; its
+    run(ACME, "-f", "plain", "--symbollist", os.path.join(OBJ, "jcore.sym"),   # labels
+        "-o", jcorebin, os.path.join(ROOT, "c64", "jcore.asm"))                  # for boot.asm
+    jcore = open(jcorebin, "rb").read()
+
+    bootbin = os.path.join(OBJ, "boot.bin")
+    open(os.path.join(OBJ, "romsg.a"), "w").write(romsg_a())
+    run(ACME, "-f", "plain", "-I", OBJ, f"-DROMSUM={rsum}", f"-DROMSUMV={sym['romsum_v'] + 0x1000}",
         f"-DMSGBUF={sym['msgbuf'] + 0x1000}", "-o", bootbin, os.path.join(ROOT, "c64", "boot.asm"))
     boot = open(bootbin, "rb").read()
 
@@ -332,21 +341,25 @@ def main():
     mem[0x0801:0x0801 + len(boot)] = boot
     mem[0x1000:0x3000] = rom                      # Z80 $0000
     mem[0x3000:0x3000 + len(blob)] = blob         # Z80 $2000
-    end = 0x3000 + len(blob)                      # the keyboard page and the
-    prg = bytes([0x01, 0x08]) + bytes(mem[0x0801:end])   # mailbox needn't load
-    prgpath = os.path.join(BUILD, "zx81.prg")
+    mem[0x3E00:0x3E00 + len(jcore)] = jcore       # the keyboard page and the mailbox
+    end = 0x3E00 + len(jcore)                     # needn't load, but carry jcore for start
+    prg = bytes([0x01, 0x08]) + bytes(mem[0x0801:end])
+    prgpath = os.path.join(OBJ, "zx64.prg")      # ZX64: what the boot file loads
     open(prgpath, "wb").write(prg)
+    stubpath = os.path.join(OBJ, "zx81.prg")     # ZX81: the boot file, a stub
+    run(ACME, "-f", "cbm", "-I", os.path.join(ROOT, "c64"), "-o", stubpath, os.path.join(ROOT, "c64", "stub.asm"))
+    stub = open(stubpath, "rb").read()
 
     blobs, psym = {}, dict(sym)                   # machine code for the test programs' REMs
     for asm in sorted(glob.glob(os.path.join(ROOT, "progs", "*.asm"))):
         name = os.path.splitext(os.path.basename(asm))[0]
-        out, lb = os.path.join(BUILD, name + ".bin"), os.path.join(BUILD, name + ".lbl")
+        out, lb = os.path.join(OBJ, name + ".bin"), os.path.join(OBJ, name + ".lbl")
         run(Z80ASM, "-o", out, f"--label={lb}", asm)
         blobs[name] = open(out, "rb").read()
         psym.update(labels(lb))
     progs = []                                    # the test programs, with zx64's addresses
     for bas in sorted(glob.glob(os.path.join(ROOT, "progs", "*.bas"))):
-        p = os.path.join(BUILD, os.path.splitext(os.path.basename(bas))[0] + ".p")
+        p = os.path.join(OBJ, os.path.splitext(os.path.basename(bas))[0] + ".p")
         open(p, "wb").write(p_file(open(bas).read(), psym, blobs))
         progs.append(p)
 
@@ -355,14 +368,16 @@ def main():
         print("\n".join(["pcheck: " + lines[0]] + ["      " + x for x in lines[1:]]))
 
     d64 = os.path.join(BUILD, "zx64.d64")
-    args = [C1541, "-format", "zx64,81", "d64", d64, "-write", prgpath, "zx81",
+    args = [C1541, "-format", "zx64,81", "d64", d64, "-write", stubpath, "zx81", "-write", prgpath, "zx64",
             "-write", monprg, "zx64mon", "-write", monprg2, "zx64mon2"]
     for p in progs + sys.argv[2:]:
         name = os.path.splitext(os.path.basename(p))[0].lower()[:16]
         args += ["-write", p, name]
     run(*args)
-    print(f"build/zx81.prg: {len(prg)} bytes (6510 loader {len(boot)}, ROM 8192, Z80 code {len(blob)})")
-    print(f"build/zx64mon.prg, zx64mon2.prg: the monitor, {len(mon)} + {len(mon2)} bytes")
+    print(f"build/obj/zx81.prg: {len(stub)} bytes, the boot file (it loads zx64, by JiffyDOS where it can)")
+    print(f"build/obj/zx64.prg: {len(prg)} bytes (6510 loader {len(boot)}, ROM 8192, Z80 code {len(blob)}, "
+          f"JiffyDOS reader {len(jcore)})")
+    print(f"build/obj/zx64mon.prg, zx64mon2.prg: the monitor, {len(mon)} + {len(mon2)} bytes")
     print(f"build/zx64.d64: the boot file, {len(progs)} test program(s) and {len(sys.argv) - 2} more")
 
 

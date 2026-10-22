@@ -8,6 +8,8 @@
 #                     packages (python3 -m venv .venv &&
 #                     .venv/bin/pip install z80 py65)
 #   make vice         the d64 in VICE with the CP/M cartridge
+#   make jtest        build/jtest.prg, the JiffyDOS probe (not on the d64:
+#                     put it on a disk with zx64's files, LOAD and RUN)
 
 ROM    ?= rom/zx81.rom
 P      ?=
@@ -22,7 +24,7 @@ export Z80ASM ACME C1541
 
 all: build/zx64.d64
 
-build/zx64.d64: z80/zx64.asm z80/mon.asm c64/boot.asm tools/build.py tools/zxbasic.py tools/pcheck.py $(wildcard progs/*.bas progs/*.asm) $(wildcard $(ROM)) $(wildcard games) $(GAMES) $(P)
+build/zx64.d64: z80/zx64.asm z80/mon.asm c64/boot.asm c64/stub.asm c64/jcore.asm tools/build.py tools/zxbasic.py tools/pcheck.py $(wildcard progs/*.bas progs/*.asm) $(wildcard $(ROM)) $(wildcard games) $(GAMES) $(P)
 	$(PYTHON) tools/build.py $(ROM) $(GAMES) $(P)
 
 test: build/zx64.d64
@@ -31,7 +33,13 @@ test: build/zx64.d64
 vice: build/zx64.d64
 	$(X64) -cpmcart -drive8truedrive -autostart build/zx64.d64
 
+jtest: build/jtest.prg
+
+build/jtest.prg: c64/jtest.asm c64/jcore.asm
+	mkdir -p build
+	$(ACME) -f cbm -I c64 -o $@ c64/jtest.asm
+
 clean:
 	rm -rf build
 
-.PHONY: all test vice clean
+.PHONY: all test vice jtest clean

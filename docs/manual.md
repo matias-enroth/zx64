@@ -10,6 +10,7 @@
 - [The monitor](#the-monitor)
 - [The test programs](#the-test-programs)
 - [Troubleshooting](#troubleshooting)
+- [The source](#the-source)
 
 ## Background
 
@@ -52,11 +53,12 @@ freezes where it is until it gets the machine back.
   <img src="img/turns-flow.svg" width="100%" alt="A timeline: the 6510 boots and sets up the VIC, then hands over with $DE00; the Z80 starts the ZX81, you type LOAD MAZOGS; the 6510 loads it from disk; the Z80 runs Mazogs while the 6510 waits">
 </p>
 
-The 6510 starts things: the boot file (`LOAD "ZX81",8`, `RUN`, about
-13K) holds its loader, your patched ROM and zx64. It sets up the VIC,
-makes a character set from the ZX81 ROM's, and hands over. The Z80
-starts at `$0000`, like a ZX81 switched on. From then on the Z80 runs
-nearly all the time, and the 6510 only wakes up for the disk.
+The 6510 starts things. The boot file (`LOAD "ZX81",8`, `RUN`) loads
+`ZX64` (about 14K: the 6510's loader, your patched ROM and zx64) and
+starts it. `ZX64` sets up the VIC, makes a character set from the ZX81 ROM's, and hands
+over. The Z80 starts at `$0000`, like a ZX81 switched on. From then on
+the Z80 runs nearly all the time, and the 6510 only wakes up for the
+disk.
 
 The Z80 sees the C64's memory shifted by 4K: where a ZX81 expects its
 ROM, at `$0000`, it finds the C64's `$1000`. The shift is the
@@ -79,9 +81,9 @@ time goes into drawing. In FAST mode it stops drawing to compute, and
 the screen goes blank.
 
 The C64's VIC draws a picture on its own; it only needs to be told what
-to show. So zx64 keeps the VIC's screen memory up to date instead: when
-the VIC signals the end of a frame, zx64 copies the display file across,
-every other frame. The ROM never notices: it writes to its display file
+to show. So zx64 keeps the VIC's screen memory up to date instead: it
+copies the display file across at the end of every other frame, when
+the VIC signals one. The ROM never notices: it writes to its display file
 as always. The Z80 spends only the copy on the picture, which is why
 zx64 is nearly twice as fast as a real ZX81 in SLOW mode. In FAST mode
 zx64 stops copying, so the picture holds still instead of going blank.
@@ -116,16 +118,19 @@ A joystick in port 2 goes in at the same place, as the ZX81 keys of its
 [layout](#the-joystick). Its lines are the keyboard's column lines, so
 with the stick held a key in one of its columns shows in every column:
 fire and `0` together would read as F7, the reset. zx64 takes those
-ghosts out too, at the price of a key in such a row elsewhere while the
-stick is held.
+ghosts out too; while the stick is held, a second key in the same row
+as such a key can't be read.
 
 ### The disk
 
 The disk is the 6510's job. For `LOAD` and `SAVE` the Z80 leaves a
 command and the name in a mailbox at `$2F00` and writes `$DE00`. The
-6510's loader, waiting since `RUN`, does the work through the C64's
-kernal, fills the bar on the top row, and switches back. The monitor's
-disk commands go the same way.
+6510's loader, waiting since `RUN`, does the work, fills the bar on the
+top row, and switches back. The monitor's disk commands go the same way.
+It reads by JiffyDOS when the drive answers to it (about 3,400 bytes a
+second, seven times the kernal's speed), with its
+own code for the serial bus, and otherwise through the C64's kernal;
+it always writes through the kernal.
 
 ### What zx64 changes in the ROM
 
@@ -162,8 +167,7 @@ go on the disk, and F7 repairs the ROM afterwards.
 
 ### The hardware
 
-The CP/M cartridge is fickle: on most original C64 boards it may not
-run at all. zx64 was developed on this setup:
+zx64 was developed on this setup:
 
 - [C64 Reloaded MK2](https://wiki.icomp.de/wiki/C64_reloaded_mk2)
   (Individual Computers). Its USB serial link reads the C64's memory,
@@ -208,17 +212,23 @@ Put `build/zx64.d64` on a disk for your drive, then on the C64:
     LOAD "ZX81",8
     RUN
 
-Loading takes about 27 seconds at the kernal's speed.
+`LOAD` takes a second or two: the boot file is small. `RUN` loads the
+rest, `ZX64`, and shows what it loads. On a drive that speaks JiffyDOS
+(an SD2IEC does), it and the monitor take about 7 seconds, so F5 opens
+the monitor at once; the ZX81 is at its `K` cursor 3 seconds later,
+10 from `RUN`. Other drives are read the kernal's way (about 28 seconds
+on an SD2IEC; a 1541 or 1571 not yet timed), and F5 loads the monitor
+the first time.
 
 In VICE: `make vice`, and set the keyboard mapping to positional.
 
 ## Using the ZX81
 
-The keys are on the same places as on the ZX81's keyboard, with the
+The keys are in the same places as on the ZX81's keyboard, with the
 ZX81's legends:
 
 <p align="center">
-  <img src="img/keyboard.png" width="100%" alt="The C64 keyboard with the ZX81's legends: keywords above, SHIFT symbols in red, functions below, block graphics in the corners; F1, F3, F5, F7 as type-ahead and colours, RAM size, monitor and joystick, reset">
+  <img src="img/keyboard.png" width="100%" alt="The C64 keyboard with the ZX81's legends: keywords above, SHIFT symbols in red, functions below, block graphics in the corners; F1, F3, F5, F7 as type-ahead and colours, joystick, monitor, reset and RAM size">
 </p>
 
 Printable overlay: [keyboard.pdf](keyboard.pdf). Keyboard viewer, to
@@ -228,22 +238,23 @@ open locally: `docs/keyboard.html`.
 |---|---|
 | SPACE, RUN/STOP | BREAK |
 | F1 | type-ahead on or off |
-| F2 (SHIFT F1) | the next colour scheme |
-| F3 | memory: 16K, 32K, 1K (resets) |
-| F5 | the monitor |
-| F6 (SHIFT F5) | the joystick: 5678+0 or your own keys; held, set your own |
+| F2 (SHIFT+F1) | the next colour scheme |
+| F3 | the joystick: 5678+0 or your own keys; held, set your own |
+| F5, F6 (SHIFT+F5) | the monitor |
 | F7 | reset |
+| F8 (SHIFT+F7) | memory: 16K, 32K, 1K (resets) |
 
 - **Type-ahead** (on by default): type at C64 speed.
 - **Colour schemes**: black on white, white on black, green screen,
   amber, black on green, C64 blue.
-- **Memory** (F3): 16K, the default, as with Sinclair's RAM pack; 32K,
+- **Memory** (F8): 16K, the default, as with Sinclair's RAM pack; 32K,
   RAM from `$4000` to `$BFFF`, all for BASIC; 1K, the bare ZX81.
 - **F7**: reset, keeping the settings (the joystick's layout too). A
-  ROM changed by a program is read again from disk first, from the
-  `ZX81` file zx64 started from. If the disk has none, or one from
+  ROM changed by a program is read again first, from the disk's `ZX64`
+  file, and the characters on the screen are
+  made again from it. If the disk has none, or one from
   another version of zx64, the ROM stays as it is and the top row says
-  so: `ROM NOT RELOADED: NO ZX81` or `OTHER ZX81`.
+  so: `ROM NOT RELOADED: NO ZX64` or `OTHER ZX64`.
 
 ## Games
 
@@ -277,10 +288,10 @@ something zx64 can't do, such as add-on hardware or hi-res. `SAVE
 A joystick in port 2 gives ZX81 keys. At the start they are the Sinclair
 cursor keys, the most common: 7 6 5 8 for up, down, left and right, 0 for
 fire. ZX81 games read the keyboard, and each picks its own keys, so you
-can teach zx64 a game's own. F6 (SHIFT F5) then switches between the two
-layouts, each shown on the top row as its keys: `U7 D6 L5 R8 F0`.
+can teach zx64 a game's own. F3 then switches between the two layouts,
+each shown on the top row as its keys: `U7 D6 L5 R8 F0`.
 
-**Your own keys:** hold F6 for a second. The program stops where it is
+**Your own keys:** hold F3 for a second. The program stops where it is
 and the top row asks for each key in turn, a `?` at the one it wants:
 `U? D- L- R- F-`. Press the game's key for it. F1 gives a direction no
 key, F5 gives up and keeps the layout as it was. After the fire key the
@@ -290,7 +301,7 @@ On a diagonal, games that read keys through the ROM (`INKEY$`, most
 BASIC games) get the direction pressed last: the ROM takes two keys at
 once as none. Games that read the keyboard themselves get both.
 
-In FAST mode F6 still switches the layouts, but a hold doesn't stop the
+In FAST mode F3 still switches the layouts, but a hold doesn't stop the
 program to ask for keys.
 
 ## The monitor
@@ -313,14 +324,13 @@ learn.
   <img src="img/shot-mon-mazogs.png" width="70%" alt="The monitor after F5 in Mazogs: the registers, and D at the game's PC">
 </p>
 
-The screen works as a C64's: move the cursor anywhere, change what is
-there, press RETURN to enter that line. HOME goes to the top row,
+The screen editor works as the C64's. HOME goes to the top row,
 CTRL+HOME to the bottom one. A memory line from `M` or a
 disassembly line from `D` can be edited in place and entered again; on
 an `M` line, the hex or the characters (`PRINT` to `PRONT`). The
 characters are stored as they show: a reversed one as the inverse
-character, a plain one not. To type reversed, RVS ON (CTRL+9), as on the
-C64; CTRL+0 or RETURN turns it off. A character the ZX81 hasn't got (`!`)
+character, a plain one not. RVS ON and OFF work as on the C64 (CTRL+9,
+CTRL+0; RETURN turns it off too). A character the ZX81 hasn't got (`!`)
 is `?`. After RETURN the line is drawn again from memory, so it shows
 what was stored.
 Numbers are hex; `=` converts. RUN/STOP stops a long listing.
@@ -352,7 +362,8 @@ mixed with the code can make that come out differently.
     Z n              line 1 a REM of n bytes, for code at 16514
     ?                help
 
-The monitor is loaded from the disk on the first F5 (about 7K). It works
+The monitor comes with the boot from a JiffyDOS drive; otherwise the
+first F5 loads it (about 8K). It works
 wherever zx64 reads the keyboard: always in SLOW mode, and in FAST mode
 at the prompt and between BASIC statements. There's no NMI, so FAST
 machine code that never reads the keyboard can't be stopped.
@@ -376,9 +387,7 @@ no program, it adds the line that runs it too, `10 RAND USR 16514`.
 
 Then `A` at `$4082`. After each line the monitor offers the next
 address; RETURN on an empty one ends (`A 4082` alone offers the first).
-Then the text, after the code,
-with `WORLD` inverse: RVS ON (CTRL+9) before it and RVS OFF (CTRL+0)
-after, as on the C64:
+Then the text, after the code, with `WORLD` typed in RVS ON:
 
     A 4082 LD HL,$408D
     LD A,(HL)
@@ -447,8 +456,9 @@ To watch it run, set a breakpoint on the `RST $10`:
     B 4089           the breakpoint off; G, and the rest is printed
 
 `S` steps one instruction instead; on the `RST $10` it goes into the
-ROM, at `$0010`. RETURN steps again; INST/DEL the `S`, and `G` goes on. A breakpoint is a `RST $38` in place of the
-instruction's first byte; zx64's interrupt handler tells it from an
+ROM, at `$0010`. RETURN steps again; to go on, delete the `S` and type
+`G`. A breakpoint is a `RST $38` in place of the instruction's first
+byte; zx64's interrupt handler tells it from an
 interrupt. It works without the `/INT` wire too. The monitor puts the
 real bytes back while it's open, so `M` and `D` show the code as it is.
 Not possible: breakpoints in zx64 or the monitor (`$2000-$3FFF`), at
@@ -465,9 +475,27 @@ instructions and needs no end mark:
     :408B 'HELLO WORLD
 
 `$000B` is the length, 11. The `JP` lets the ROM's routine return to
-BASIC itself. Unlike the C64's kernal table, `$0B6B` is just where the
-routine is in this ROM, not an entry point anyone promised to keep;
-`RST $10`'s address is fixed by the Z80 itself.
+BASIC itself.
+
+The monitor can call the ROM without BASIC: a `CALL`, a breakpoint on
+the instruction after it, and the registers set by hand. F5 at the
+prompt, then
+
+    :7000 'HELLO WORLD
+    A 7010 CALL $0B6B
+    B 7013
+    R
+
+On the `;` line, note the PC (where F5 stopped the ZX81), type `7010`
+over it, `000B` over BC and `7000` over DE, and RETURN. `G`: the monitor
+opens again at `7013`, DE just past the text and BC counted down to
+`FFFF`. The text is where the ZX81 prints next: from the editor, after
+the report on the bottom line. Then `B 7013` to take the breakpoint off,
+the old PC back on the `;` line, and `X`: the editor goes on as it was.
+
+`G 0B6B` alone would print too, but the routine's `RET` then goes back
+into whatever F5 stopped, past the end of it: from the editor, the ZX81
+no longer takes keys.
 
 ### Reading the ROM
 
@@ -511,7 +539,7 @@ and type over `PRINT` on its line.
 ### Text in memory
 
 `:` takes text between `'`s, as ZX81 characters, mixed with bytes;
-characters typed with RVS ON (CTRL+9) are stored inverse. A
+characters typed with RVS ON are stored inverse. A
 text that runs to the end of the line needs no closing `'`, and the
 monitor offers the next line to go on with:
 
@@ -569,7 +597,7 @@ The d64 always has four, made from `progs/*.bas` with zx64's addresses
 filled in. Each runs as it loads.
 
 - **`SPEED`** checks the setup and times 50 turns of an empty `FOR`
-  loop. PAL or NTSC; `/INT SEEN` 1 means the wire works; stray IRQs
+  loop. PAL or NTSC; `/INT SEEN: 1` means the wire works; stray IRQs
   are interrupts the VIC didn't raise (noise on the wire). zx64 takes 30
   frames, a UK ZX81 56-58 (see [The picture](#the-picture)). In FAST mode
   it's the other way round: the ZX81's 3.25 MHz Z80 is about twice as
@@ -590,14 +618,18 @@ filled in. Each runs as it loads.
   `/INT` wire is missing or loose. `SPEED` says `/INT SEEN: 0`. Push the
   cartridge fully home; half-seated, the picture freezes and keys come
   and go.
-- **"NO Z80: ZX64 NEEDS THE C64 CP/M CARTRIDGE."** The boot file found
-  no Z80: no cartridge, or it isn't seated.
-- **Report D on LOAD.** The file isn't on the drive the boot file came
+- **"NO Z80: ZX64 NEEDS THE C64 CP/M CARTRIDGE."** zx64 found no Z80:
+  no cartridge, or it isn't seated.
+- **"ZX64 NOT LOADED"** after `RUN`: the disk has the boot file, `ZX81`,
+  but not `ZX64` (or a disk error). Put all of `build/zx64.d64`'s files
+  on it (`ZX81`, `ZX64`, `zx64mon`, `zx64mon2`).
+- **Report D on LOAD.** The file isn't on the drive zx64 came
   from, under that name or with `.P`. `@` in the monitor shows the
   drive's message.
 - **A game crashes, or F7 hangs.** It may write where it shouldn't:
   `tools/pcheck.py -v` shows its `OUT`s and where they land. F7 repairs
-  the ROM, but not zx64's own code; then reload the boot file.
+  the ROM, but not zx64's own code: the top row then says `ZX64 CHANGED:
+  LOAD IT AGAIN`; load the boot file again.
 - **"NO ZX64MON ON THE DISK"** on F5: the files `zx64mon` and `zx64mon2`
   aren't on the drive zx64 booted from.
 - **Typing in VICE gives the wrong keys.** Set VICE's keyboard mapping

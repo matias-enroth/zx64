@@ -10,7 +10,7 @@ at the ZX81 and read its screen.
 
     python3 tools/simulate.py          (make test)
 
-Needs build/zx81.prg and build/zx64.lbl (make), and the z80 and py65
+Needs build/obj/zx64.prg and build/obj/zx64.lbl (make), and the z80 and py65
 packages, e.g. in a venv:
 
     python3 -m venv .venv && .venv/bin/pip install z80 py65
@@ -56,6 +56,7 @@ for c64, zx in KEYMAP:
 # C64 keys with no ZX81 key of their own
 C64NAMES = {"LSHIFT": (1, 7), "RSHIFT": (6, 4), "CRSRRIGHT": (0, 2), "CRSRDOWN": (0, 7),
             "F1": (0, 4), "F3": (0, 5), "F5": (0, 6), "F7": (0, 3)}
+FKEYS = {"F8": {C64NAMES["LSHIFT"], C64NAMES["F7"]}}   # SHIFT+F7, the same key as F7
 
 # The joystick in port 2: $DC00's bits, 0 when pressed. Its lines are the
 # keyboard's column lines, so a held direction selects that column too.
@@ -70,7 +71,9 @@ MSCR = 0xF400                # the monitor's screen, as the Z80 sees it (C64 $04
 
 KERNAL = {0xFFBD: "setnam", 0xFFBA: "setlfs", 0xFFC0: "open", 0xFFC3: "close",
           0xFFC6: "chkin", 0xFFC9: "chkout", 0xFFCC: "clrchn", 0xFFCF: "chrin",
-          0xFFD2: "chrout", 0xFFB7: "readst", 0xFF81: "init", 0xFF84: "init", 0xFF8A: "init"}
+          0xFFD2: "chrout", 0xFFB7: "readst", 0xFF81: "init", 0xFF84: "init", 0xFF8A: "init",
+          0xFF96: "tksa", 0xFFAB: "untlk"}
+CALL_TRAP = 0xFFF0           # where call_6510's routines return to
 
 
 class Drive:
@@ -128,16 +131,133 @@ class Drive:
             self.status = b"00, OK,00,00\r"
 
 
+class IEC:
+    """The serial bus on CIA 2's port A ($DD00), cycle by cycle, with one
+    drive on it that may speak JiffyDOS, as jtest saw an SD2IEC do
+    (c64/jcore.asm has the protocol): ATN bytes a bit at a time, the ask
+    (CLK held low before a byte's last bit: the drive pulls DATA for ~100
+    us), then bytes two bits at a time. The kernal's own bus calls are
+    the Machine's traps; its TKSA turns the bus around here. Times are
+    6510 cycles, taken as microseconds."""
+
+    ASK, ANSWER = 200, 100           # CLK low that long before the last bit; DATA pulled that long
+    NEXT = 100                       # the drive's time to have the next byte ready
+    PAIRS = ((12, 21), (21, 31), (31, 42), (42, 53))   # bits 0-1 ... 6-7, after the go
+    MARK = 53
+
+    def __init__(self, m, jiffy=True, present=True, stuck=False):
+        self.m, self.jiffy, self.present = m, jiffy, present
+        self.stuck = stuck               # answers ATN, then never lets go of DATA
+        self.out = 0                     # what the 6510 wrote: bit 3 ATN, 4 CLK, 5 DATA pulled
+        self.state = "idle"
+        self.dclk = self.ddata = False   # the drive pulling CLK, DATA
+        self.bits = self.byte = 0
+        self.clk_low_at = 0
+        self.asked = self.talking = False
+        self.answer = None               # (from, to): the drive's answer to the ask
+        self.ch = {"read": b"", "pos": 0}  # the channel talking (its bytes, where it is)
+        self.ready_at = self.go_at = None
+        self.atn_bytes = []
+        self.sent = 0                    # Jiffy bytes the 6510 took
+
+    def now(self):
+        return self.m.cpu.processorCycles + 3        # an absolute access's last cycle
+
+    def write(self, v):
+        t, was = self.now(), self.out
+        self.out = v & 0x38
+        atn, clk, data = v & 8, v & 0x10, v & 0x20
+        if clk and not was & 0x10:
+            self.clk_low_at = t
+        if atn and not was & 8 and self.present:
+            self.state, self.ddata, self.dclk, self.asked = "atn", True, False, False
+            self.go_at = None
+        if self.state == "atn" and was & 0x10 and not clk and not self.stuck:
+            self.ddata, self.state, self.bits, self.byte = False, "bits", 0, 0   # ready for data
+        elif self.state == "bits" and was & 0x10 and not clk:
+            self.byte |= (0 if data else 1) << self.bits                          # a bit, low first
+            self.bits += 1
+        elif self.state == "bits" and clk and not was & 0x10 and self.bits == 8:
+            self.ddata, self.state = True, "atn"                                  # got it
+            self.atn_bytes.append(self.byte)
+            if self.byte == 0x48:
+                self.talking = True
+        elif self.state == "jtalk":
+            if was & 0x20 and not data and self.go_at is None and t >= self.ready_at:
+                self.go_at = t                                                    # go
+            elif data and not was & 0x20 and self.go_at is not None:
+                self.go_at = None                                                 # got it
+                self.sent += 1
+                self.ch["pos"] += 1
+                if self.ch["pos"] >= len(self.ch["read"]):
+                    self.state = "jdone"
+                else:
+                    self.ready_at = t + self.NEXT
+
+    def lines(self):
+        """(CLK low, DATA low), the drive's side."""
+        t = self.now()
+        if self.state == "bits" and self.bits == 7 and self.out & 0x10 and self.jiffy:
+            if self.answer is None and t - self.clk_low_at >= self.ASK:
+                self.answer = (self.clk_low_at + self.ASK, self.clk_low_at + self.ASK + self.ANSWER)
+                self.asked = True
+            if self.answer and self.answer[0] <= t < self.answer[1]:
+                return False, True
+        if self.state == "bits" and self.bits != 7:
+            self.answer = None
+        if self.state == "jtalk":
+            if self.go_at is None:
+                return t < self.ready_at, False                                   # CLK low: busy
+            dt, b = t - self.go_at, self.ch["read"][self.ch["pos"]]
+            for k, (lo, hi) in enumerate(self.PAIRS):
+                if lo <= dt < hi:
+                    return not b >> 2 * k & 1, not b >> 2 * k + 1 & 1
+            if dt >= self.MARK:
+                last = self.ch["pos"] == len(self.ch["read"]) - 1
+                return not last, last
+            return False, False
+        if self.state == "jdone":
+            return True, False
+        return self.dclk, self.ddata
+
+    def read(self):
+        clk, data = self.lines()
+        clk |= bool(self.out & 0x10)
+        data |= bool(self.out & 0x20)
+        return (self.m.ram[0xDD00] & 0x07) | self.out | (0 if clk else 0x40) | (0 if data else 0x80)
+
+    def tksa(self, sa):
+        """The kernal's TKSA: the secondary address under ATN, then the turn
+        around: ATN and CLK released, DATA pulled; the talker takes CLK."""
+        self.atn_bytes.append(sa)
+        self.out = 0x20
+        self.ddata = self.dclk = False           # (a file that isn't there: the lines let go,
+        if self.state != "atn" or not self.talking:   # jget finds no mark: an SD2IEC's under 1 s)
+            return
+        ch = next((c for c in self.m.channels.values() if c.get("sa") == sa & 0x0F), None)
+        if self.asked and ch and ch.get("read") and ch["pos"] < len(ch["read"]):
+            self.ch = ch
+            self.state, self.ready_at, self.go_at = "jtalk", self.now() + self.NEXT, None
+        else:
+            self.state = "talk"                  # plain: the kernal's ACPTR, not modelled
+
+    def untlk(self):
+        self.out = 0
+        self.state, self.talking, self.asked, self.answer = "idle", False, False, None
+        self.dclk = self.ddata = False
+
+
 class Machine:
     all = []
 
-    def __init__(self, int_wired=True, prg=None):
+    def __init__(self, int_wired=True, prg=None, jiffy=False):
         self.int_wired = int_wired
         self.ram = bytearray(0x10000)            # C64 memory (the 6510's view)
         self.mem = ObservableMemory(subject=self.ram)
         self.cpu = MPU(memory=self.mem)
         self.z = z80.Z80Machine()
         self.drive = Drive()
+        self.iec = IEC(self, jiffy=jiffy)        # a plain drive unless asked: the kernal's reads
         self.keys = set()                        # C64 keys down: (column, row)
         self.cia_glitch = True                   # see _kbd
         self.ciareads = 0
@@ -155,10 +275,11 @@ class Machine:
         self.lbl = labels()
         self.channels, self.cin, self.cout, self.name, self.lfs, self.st = {}, None, None, b"", (0, 0, 0), 0
         self.printed = ""                        # what CHROUT put on the C64's screen
-        prg = prg or open(os.path.join(ROOT, "build", "zx81.prg"), "rb").read()
+        prg = prg or open(os.path.join(ROOT, "build", "obj", "zx64.prg"), "rb").read()
         load = prg[0] | prg[1] << 8
         self.ram[load:load + len(prg) - 2] = prg[2:]
         self.ram[0xBA] = 8
+        self.ram[0xDD00] = 0x07                  # as the kernal's IOINIT leaves it: VIC bank 0, PA2 high
 
         m = self.mem
         m.subscribe_to_write(range(0xDE00, 0xDF00), self._c64_switch)
@@ -170,6 +291,10 @@ class Machine:
         m.subscribe_to_write([0xDC00], lambda a, v: setattr(self, "pa", v))
         m.subscribe_to_read([0xDC01], lambda a: self._kbd())
         m.subscribe_to_read([0xD019], lambda a: self._d019())
+        m.subscribe_to_write([0xDD00], lambda a, v: self._dd00(v))
+        m.subscribe_to_read([0xDD00], lambda a: self.iec.read())
+        m.subscribe_to_read([0xD012], lambda a: self._d012())
+        self.rasters = []                        # what the 6510 read from $D012
 
         z = self.z
         z.set_read_callback(self._z80_read)
@@ -274,27 +399,54 @@ class Machine:
         else:
             self.z.memory[port] = v
 
+    def _d012(self):
+        line = (self.cpu.processorCycles // 63 + 250) % 312   # 63 cycles a line, PAL
+        self.rasters.append(line)
+        return line & 0xFF
+
+    def _dd00(self, v):
+        self.ram[0xDD00] = v
+        self.iec.write(v)
+
     def _c64_switch(self, a, v):
         if not v & 1:
             self.z80_on = True
 
     # ---- the 6510 and its kernal
     def run_6510(self, limit=2_000_000):
-        cpu = self.cpu
         for _ in range(limit):
             if self.z80_on:
                 self.z.memory[0x0000:0xF000] = self.ram[0x1000:0x10000]
                 self.z.memory[0xF000:0x10000] = self.ram[0x0000:0x1000]
                 return
-            if cpu.pc in KERNAL:
-                getattr(self, "k_" + KERNAL[cpu.pc])()
-                lo = self.ram[0x100 + ((cpu.sp + 1) & 0xFF)]
-                hi = self.ram[0x100 + ((cpu.sp + 2) & 0xFF)]
-                cpu.sp = (cpu.sp + 2) & 0xFF
-                cpu.pc = ((hi << 8) | lo) + 1
-            else:
-                cpu.step()
-        raise AssertionError(f"the 6510 never handed back (pc ${cpu.pc:04X})")
+            self.step_6510()
+        raise AssertionError(f"the 6510 never handed back (pc ${self.cpu.pc:04X})")
+
+    def step_6510(self):
+        cpu = self.cpu
+        if cpu.pc in KERNAL:
+            getattr(self, "k_" + KERNAL[cpu.pc])()
+            lo = self.ram[0x100 + ((cpu.sp + 1) & 0xFF)]
+            hi = self.ram[0x100 + ((cpu.sp + 2) & 0xFF)]
+            cpu.sp = (cpu.sp + 2) & 0xFF
+            cpu.pc = ((hi << 8) | lo) + 1
+        else:
+            cpu.step()
+
+    def call_6510(self, addr, a=0, x=0, y=0, limit=5_000_000):
+        """Call a 6510 routine directly (the Z80 stays where it is); returns
+        A, X, Y and the carry."""
+        cpu = self.cpu
+        ret = CALL_TRAP - 1
+        self.ram[0x100 + cpu.sp] = ret >> 8
+        self.ram[0x100 + ((cpu.sp - 1) & 0xFF)] = ret & 0xFF
+        cpu.sp = (cpu.sp - 2) & 0xFF
+        cpu.pc, cpu.a, cpu.x, cpu.y = addr, a, x, y
+        for _ in range(limit):
+            if cpu.pc == CALL_TRAP:
+                return cpu.a, cpu.x, cpu.y, bool(cpu.p & cpu.CARRY)
+            self.step_6510()
+        raise AssertionError(f"6510 ${addr:04X} never returned (pc ${cpu.pc:04X})")
 
     def carry(self, c):
         self.cpu.p = self.cpu.p | self.cpu.CARRY if c else self.cpu.p & ~self.cpu.CARRY & 0xFF
@@ -311,7 +463,7 @@ class Machine:
         if lfn in self.channels:
             self.cpu.a = 2                       # file already open
             return self.carry(True)
-        self.channels[lfn] = dict(self.drive.open(self.name, sa), pos=0)
+        self.channels[lfn] = dict(self.drive.open(self.name, sa), pos=0, sa=sa)
         self.carry(False)
 
     def k_close(self):
@@ -353,6 +505,12 @@ class Machine:
             ch["write"].append(self.cpu.a)
         self.carry(False)
 
+    def k_tksa(self):
+        self.iec.tksa(self.cpu.a)
+
+    def k_untlk(self):
+        self.iec.untlk()
+
     def k_readst(self):
         self.cpu.a = self.st
 
@@ -361,7 +519,7 @@ class Machine:
         """To the K cursor, and (unless banner) until the version shown on
         the top row is gone."""
         self.cpu.pc, self.cpu.sp = 2061, 0xF6
-        self.run_6510()
+        self.run_6510(limit=20_000_000)          # (the boot file may load zx64 by JiffyDOS)
         self.until(lambda: self.cursor() and self.ready(), frames, "the K cursor")
         if not banner:
             self.until(lambda: not self.z.memory[self.lbl["ovl"]], 200, "the version on the top row gone")
@@ -486,7 +644,7 @@ class Machine:
         self.run(2)
 
     def tap(self, name, frames=10):
-        self.keys = {C64NAMES[name]}
+        self.keys = set(FKEYS[name]) if name in FKEYS else {C64NAMES[name]}
         self.run(3)
         self.keys = set()
         self.run(frames)
@@ -499,9 +657,15 @@ class Machine:
 
 
 def labels():
-    text = open(os.path.join(ROOT, "build", "zx64.lbl")).read()
+    text = open(os.path.join(ROOT, "build", "obj", "zx64.lbl")).read()
     return {m.group(1).lower(): int(m.group(2), 16)
             for m in re.finditer(r"^(\w+):\s+equ\s+\$([0-9A-Fa-f]+)", text, re.M)}
+
+
+def jlabels():
+    """c64/jcore.asm's labels (acme's symbol list), names as written."""
+    text = open(os.path.join(ROOT, "build", "obj", "jcore.sym")).read()
+    return {m.group(1): int(m.group(2), 16) for m in re.finditer(r"^\s*(\w+)\s*=\s*\$([0-9a-fA-F]+)", text, re.M)}
 
 
 failures = 0
@@ -535,16 +699,16 @@ def enter(m, seq):
 
 
 def main():
-    if not os.path.exists(os.path.join(ROOT, "build", "zx81.prg")):
-        sys.exit("build/zx81.prg is missing: run make first (it needs your ZX81 ROM)")
+    if not os.path.exists(os.path.join(ROOT, "build", "obj", "zx64.prg")):
+        sys.exit("build/obj/zx64.prg is missing: run make first (it needs your ZX81 ROM)")
 
     # ---- the CPU switch: "You MUST follow the mode switching store
     # instruction with a NOP" (Commodore's CP/M guide, 6.6.1); the first
     # start of the Z80, at $0000, must find one too. The emulators here
     # don't lose that byte, the hardware can.
-    z80 = open(os.path.join(ROOT, "build", "zx64.bin"), "rb").read()
-    c64 = open(os.path.join(ROOT, "build", "boot.bin"), "rb").read()
-    rom0 = open(os.path.join(ROOT, "build", "zx81.prg"), "rb").read()[0x1000 - 0x0801 + 2]
+    z80 = open(os.path.join(ROOT, "build", "obj", "zx64.bin"), "rb").read()
+    c64 = open(os.path.join(ROOT, "build", "obj", "boot.bin"), "rb").read()
+    rom0 = open(os.path.join(ROOT, "build", "obj", "zx64.prg"), "rb").read()[0x1000 - 0x0801 + 2]
     zsw = [i for i in range(len(z80) - 3) if z80[i:i + 3] == b"\x32\x00\xce"]
     csw = [i for i in range(len(c64) - 3) if c64[i:i + 3] == b"\x8d\x00\xde"]
     check("a NOP after every switch store (Z80 LD ($CE00),A, 6510 STA $DE00), and at $0000",
@@ -976,13 +1140,13 @@ def main():
         a setting's message shows. Then waits the message out (2 seconds)
         and for the ROM to be ready for keys (after a reset, with the K
         cursor; otherwise a report may still be showing)."""
-        m.keys = {C64NAMES[name]}
+        m.keys = set(FKEYS[name]) if name in FKEYS else {C64NAMES[name]}
         m.run(3)
         m.keys = set()
         m.run(3)
         top = m.screen()[0]
         m.run(110)
-        reset = name in ("F3", "F7")
+        reset = name in ("F7", "F8")
         m.until(lambda: m.ready() and (m.cursor() or not reset), 600, f"the ROM ready after {name}")
         return top
 
@@ -1080,34 +1244,59 @@ def main():
     m.until(lambda: m.cursor() and m.ready(), 400, "the K cursor after F7 in FAST")
     check("F7 in a FAST program: the ZX81 starts again", running and m.peek16(0x400C) == 0x407D,
           f"(frame {m.frames})")
+    for line in ("1 0 SHIFT+F", "2 0 G 2 0"):
+        m.type(line + " NEWLINE")
+    m.type("R")
+    m.keys = {C64KEY[ZXKEY["NEWLINE"]]}
+    m.until(lambda: m.z.memory[0x4027] == 0xFF, 100, "RUN taken")
+    m.keys = set()
+    m.run(50)
+    running = not m.ready()
+    m.keys = set(FKEYS["F8"])
+    m.run(5)
+    m.keys = set()
+    m.until(lambda: m.cursor() and m.ready(), 400, "the K cursor after F8 in FAST")
+    check("F8 in a FAST program: the next memory size (32K), the ZX81 starts again",
+          running and m.peek16(0x4004) == 0xC000 and m.peek16(0x400C) == 0x407D, f"RAMTOP ${m.peek16(0x4004):04X}")
 
     # ---- F7 after a program wrote over the ROM (aydemo.p's AY register
-    # selects: OUT ($DF),A with A = 0-15): the ROM read again from the disk
+    # selects, OUT ($DF),A with A = 0-15, and its data, OUT ($0F),A: A = 0
+    # lands at $000F): the ROM read again from the disk
     m = Machine(int_wired=True)
     m.boot()
     rom = bytes(m.z.memory[0x0000:0x2000])
-    m.drive.files[b"ZX81"] = open(os.path.join(ROOT, "build", "zx81.prg"), "rb").read()
+    m.drive.files[b"ZX64"] = open(os.path.join(ROOT, "build", "obj", "zx64.prg"), "rb").read()
     m.z.memory[0x00FE] = 0x5A                                # the rows zx64 puts there: not damage
     opens = m.drive.opens
     m.tap("F7", 3)
     m.until(lambda: m.cursor() and m.ready(), 400, "the K cursor after F7")
     check("F7 with the ROM as it was: no disk access", m.drive.opens == opens
           and m.z.memory[0x00FE] == rom[0x00FE], f"{m.drive.opens - opens} opens")
-    for a in range(0x00DF, 0x1000, 0x100):
+    font = bytes(m.z.memory[0xD800:0xE000])                  # the charset, C64 $E800
+    for a in list(range(0x00DF, 0x1000, 0x100)) + list(range(0x000F, 0x1000, 0x100)):
         m.z.memory[a] ^= 0x55
     m.z.memory[0x0000:0x0005] = bytes(5)                     # the calculator's own writes: ignored
+    m.z.memory[0xD80F] = 0xD8                                # aydemo's A = $D8: char 1's bottom row
+    m.z.memory[0xDC0F] = 0xDC                                # and its inverse's
     m.barlog = []
     m.tap("F7", 3)
     m.until(lambda: m.cursor() and m.ready(), 600, "the K cursor after F7, the ROM read again")
     back = bytes(m.z.memory[0x0005:0x2000]) == rom[0x0005:]
-    check("F7 with the ROM written over: read again from the boot file (with the bar), the ZX81 starts",
+    check("F7 with the ROM written over: read again from ZX64 (with the bar), the ZX81 starts",
           back and m.drive.opens == opens + 1 and m.barlog and not m.channels,
           f"ROM {'back' if back else 'still wrong'}, {m.drive.opens - opens} opens, {len(m.barlog)} bar writes")
+    check("F7 with the ROM read again: the C64's charset made again from it",
+          bytes(m.z.memory[0xD800:0xE000]) == font,
+          f"{sum(x != y for x, y in zip(m.z.memory[0xD800:0xE000], font))} bytes differ")
+    m.tap("F7", 3)
+    m.until(lambda: m.cursor() and m.ready(), 600, "the K cursor after F7 again")
+    check("F7 again after the ROM was read again: no disk access", m.drive.opens == opens + 1,
+          f"{m.drive.opens - opens - 1} more opens")
 
-    # The ROM read again only if the boot file is this build's, into the
+    # The ROM read again only if ZX64 is this build's, into the
     # ZX81's RAM first, clear of the Z80's stack; why not, on the top row
     def f7_rom(m, files, damage=0x0100):
-        m.drive.files.pop(b"ZX81", None)
+        m.drive.files.pop(b"ZX64", None)
         m.drive.files.update(files)
         m.z.memory[damage] ^= 0x55
         hurt = bytes(m.z.memory[0x0005:0x2000])
@@ -1115,35 +1304,112 @@ def main():
         m.tap("F7", 3)
         m.until(lambda: m.cursor() and m.ready(), 600, "the K cursor after F7")
         return bytes(m.z.memory[0x0005:0x2000]) == hurt, m.drive.opens - opens, m.screen()[0].strip()
-    prg = open(os.path.join(ROOT, "build", "zx81.prg"), "rb").read()
+    prg = open(os.path.join(ROOT, "build", "obj", "zx64.prg"), "rb").read()
     other = bytearray(prg)
     other[2 + 0x1000 - 0x0801 + 0x0400] ^= 0xFF                 # another build: a byte of its ROM
-    seen = [f7_rom(m, {}), f7_rom(m, {b"ZX81": bytes(other)}, damage=0x0200)]
+    seen = [f7_rom(m, {}), f7_rom(m, {b"ZX64": bytes(other)}, damage=0x0200)]
     m.z.memory[0x0100] ^= 0x55                               # (both left the ROM as it was)
     m.z.memory[0x0200] ^= 0x55
     check("F7: no ZX81 on the disk, or another build's: the ROM left as it was, the ZX81 starts, "
           "the top row says why",
-          seen == [(True, 1, "rom not reloaded: no zx81"), (True, 1, "rom not reloaded: other zx81")], f"{seen}")
+          seen == [(True, 1, "rom not reloaded: no zx64"), (True, 1, "rom not reloaded: other zx64")], f"{seen}")
     sv = lb["romsum_v"]
     m.z.memory[sv] ^= 1                                      # zx64's own copy of the sum
-    seen = f7_rom(m, {b"ZX81": prg})
+    seen = f7_rom(m, {b"ZX64": prg})
     m.z.memory[sv] ^= 1
     m.z.memory[0x0100] ^= 0x55
     check("F7 with zx64's own code written over (romsum_v): no disk access, the top row says so",
           seen == (True, 0, "zx64 changed: load it again"), f"{seen}")
     for _ in range(2):                                       # 32K, then 1K: the Z80's stack
-        m.tap("F3", 3)                                       # under $4400
-        m.until(lambda: m.cursor() and m.ready(), 600, "the K cursor after F3")
+        m.tap("F8", 3)                                       # under $4400
+        m.until(lambda: m.cursor() and m.ready(), 600, "the K cursor after F8")
     m.z.memory[0x6000:0x8000] = bytes(0x2000)
-    ok, opens, top = f7_rom(m, {b"ZX81": prg})
+    ok, opens, top = f7_rom(m, {b"ZX64": prg})
     back = bytes(m.z.memory[0x0005:0x2000]) == rom[0x0005:]
     check("F7 in 1K (the stack in the first buffer, Z80 $4000): read into the other ($6000), the ROM back",
           back and opens == 1 and bytes(m.z.memory[0x6005:0x8000]) == rom[0x0005:] and top.startswith("1k ram "),
           f"ROM {'back' if back else 'wrong'}, {opens} opens, {top!r}")
 
-    # ---- F3: 16K, 32K, 1K, 16K again; each starts the ZX81 again
+    # ---- the JiffyDOS reader (c64/jcore.asm): put in place by start; jtalk
+    # and jget against IEC's drive, a JiffyDOS one, a plain one, none
+    jl = jlabels()
+    m = Machine(int_wired=True)
+    m.boot()
+    core = open(os.path.join(ROOT, "build", "obj", "jcore.bin"), "rb").read()
+    pieces = [(jl["jimg" + n] - 0x3E00, at, jl["jc" + n + "end"]) for n, at in (("1", 0x0334), ("2", 0x02A7),
+                                                                                  ("3", 0x0200))]
+    check("the JiffyDOS reader in place after the boot: $0334, $02A7 and $0200; no JiffyDOS read open",
+          m.ram[jl["JFLAG"]] == 0 and all(m.ram[at:end] == core[o:o + end - at] for o, at, end in pieces),
+          f"JFLAG {m.ram[jl['JFLAG']]}")
+
+    def portbits(m):
+        """What jtalk should make of $DD00 and $D011: JREL JPULL JFIX JNY."""
+        rel = m.ram[0xDD00] & 7
+        fix = rel
+        for _ in range(3):
+            fix = fix >> 2 ^ rel
+        return rel, rel | 0x20, fix, (m.ram[0xD011] & 7) ^ 7
+
+    def jbits(m):
+        return tuple(m.ram[jl[n]] for n in ("JREL", "JPULL", "JFIX", "JNY"))
+
+    def jread(m, data, jiffy=True, present=True, stuck=False):
+        """OPEN the kernal's way, then jtalk and (if the drive said yes) jget
+        to the last byte, jend, CLOSE: (JFLAG, the bytes, JST, the ATN bytes)."""
+        m.drive.files[b"JT"] = data
+        m.iec = IEC(m, jiffy=jiffy, present=present, stuck=stuck)
+        m.ram[0x5000:0x5002] = b"JT"
+        m.call_6510(0xFFBD, a=2, x=0x00, y=0x50)            # SETNAM
+        m.call_6510(0xFFBA, a=2, x=8, y=2)                  # SETLFS 2,8,2
+        m.call_6510(0xFFC0)                                 # OPEN
+        m.call_6510(jl["jtalk"], a=8, x=0x62)
+        got = bytearray()
+        flag = m.ram[jl["JFLAG"]]
+        while flag and not m.ram[jl["JST"]] & 0x42 and len(got) <= len(data):
+            got.append(m.call_6510(jl["jget"])[0])
+        m.call_6510(jl["jend"])
+        m.call_6510(0xFFC3, a=2)                            # CLOSE
+        return flag, bytes(got), m.ram[jl["JST"]], m.iec.atn_bytes
+    data = bytes(range(256)) + bytes(255 - i for i in range(256)) + b"\x00\xff\x55"
+    gos = []
+    write = IEC.write
+    def gowatch(self, v):
+        was = self.go_at
+        write(self, v)
+        if self.go_at is not None and was is None:
+            gos.append(self.go_at)
+    IEC.write = gowatch
+    m.rasters = []
+    try:
+        seen = jread(m, data)
+    finally:
+        IEC.write = write
+    held = sum(1 for r in m.rasters if r & 7 >= 5)
+    line = lambda t: (t // 63 + 250) % 312
+    check("jtalk and jget, a JiffyDOS drive: it says yes, every byte as sent, the last one marked; "
+          "the port's bits and the y-scroll worked out",
+          seen[0] == 1 and seen[1] == data and seen[2] == 0x40 and seen[3] == [0x48, 0x62]
+          and jbits(m) == portbits(m) and portbits(m)[0] == 4 and portbits(m)[3] == 0,
+          f"JFLAG {seen[0]}, {len(seen[1])} of {len(data)} bytes, "
+          f"{'same' if seen[1] == data else 'different'}, JST ${seen[2]:02X}, ATN {seen[3]}")
+    check("jget's raster guard: each byte starts on a line 0-4 mod 8, its mark before the bad line (7); "
+          "on 5-7 it waits", len(gos) == len(data) and held
+          and all(line(t) & 7 < 5 and line(t + 58) & 7 != 7 for t in gos),
+          f"{len(gos)} bytes, lines mod 8 {sorted({line(t) & 7 for t in gos})}, {held} reads held back")
+    seen = [jread(m, data, jiffy=False)[0::3], jread(m, data, present=False)]
+    check("jtalk, a plain drive: no; no drive at all: no, and the lines let go",
+          seen[0] == (0, [0x48, 0x62]) and seen[1][0] == 0 and seen[1][3] == [] and m.iec.out == 0,
+          f"{seen[0]}, none: JFLAG {seen[1][0]} ATN {seen[1][3]} lines ${m.iec.out:02X}")
+    t0 = m.cpu.processorCycles
+    stuck = jread(m, data, stuck=True)
+    took = m.cpu.processorCycles - t0
+    check("jtalk, a drive that answers ATN and then never lets go of DATA: a time-out (about 1 s), "
+          "no JiffyDOS, the lines let go", stuck[0] == 0 and stuck[3] == [] and m.iec.out == 0 and took < 2_000_000,
+          f"JFLAG {stuck[0]}, {took} cycles, lines ${m.iec.out:02X}")
+
+    # ---- F8 (SHIFT+F7): 16K, 32K, 1K, 16K again; each starts the ZX81 again
     def size(m):
-        top = tap(m, "F3")
+        top = tap(m, "F8")
         return m.peek16(0x4004), top.split()[0] if top.split() else ""
 
     def dim(m, n):
@@ -1164,7 +1430,7 @@ def main():
     eline = m.peek16(0x4014)
     r = enter(m, "S SHIFT+P B I G SHIFT+P")
     saved = len(m.drive.files[b"BIG"]) == eline - 0x4009
-    check("F3: 32K, RAMTOP $C000; DIM A(4000) fits, as it doesn't in 16K",
+    check("F8: 32K, RAMTOP $C000; DIM A(4000) fits, as it doesn't in 16K",
           top32 == 0xC000 and sz32 == "32k" and r16.startswith("4/") and r32 == "7" and saved,
           f"RAMTOP ${top32:04X} {sz32!r}, 16K: {r16}, 32K: {r32}, E_LINE ${eline:04X}, SAVE {r}")
     new(m)
@@ -1177,7 +1443,7 @@ def main():
     r1 = enter(m, "P 1 2")
     rd = enter(m, "D A SHIFT+I 3 0 0 SHIFT+O")                # 1,500 bytes
     rl = enter(m, "J SHIFT+P B I G SHIFT+P")
-    check("F3 again: 1K, RAMTOP $4400; PRINT works, DIM A(300) and the 20K program don't fit",
+    check("F8 again: 1K, RAMTOP $4400; PRINT works, DIM A(300) and the 20K program don't fit",
           top1 == 0x4400 and sz1 == "1k" and r1 == "0/0" and rd.startswith("4/") and rl.startswith("4/"),
           f"RAMTOP ${top1:04X} {sz1!r}, PRINT {r1}, DIM {rd}, LOAD {rl}")
     top16, sz16 = size(m)
@@ -1185,7 +1451,7 @@ def main():
     m.run(3)
     m.keys = set()
     m.until(lambda: m.cursor() and m.ready(), 600, "the K cursor after F7")
-    check("F3 again: 16K, and F7 keeps the size", top16 == 0x8000 and sz16 == "16k" and m.peek16(0x4004) == 0x8000,
+    check("F8 again: 16K, and F7 keeps the size", top16 == 0x8000 and sz16 == "16k" and m.peek16(0x4004) == 0x8000,
           f"RAMTOP ${top16:04X} {sz16!r}, after F7 ${m.peek16(0x4004):04X}")
 
     # MEM tests every free byte: 32K, then with a byte that doesn't hold
@@ -1197,14 +1463,14 @@ def main():
                 super()._z80_write(a, v)
 
     def mem(m):
-        m.drive.files[b"MEM"] = open(os.path.join(ROOT, "build", "mem.p"), "rb").read()
+        m.drive.files[b"MEM"] = open(os.path.join(ROOT, "build", "obj", "mem.p"), "rb").read()
         r = enter(m, "J SHIFT+P M E M SHIFT+P")
         return r, [x for x in m.screen() if x.strip()]
 
     m = Stuck(int_wired=True)
     m.boot()
     m.z.mark_addrs(0x9000, 1, m.z.WRITE_MARK)
-    tap(m, "F3")
+    tap(m, "F8")
     r, scr = mem(m)
     check("MEM in 32K: every free byte, up to $BFxx, OK",
           "RAM      32K" in scr and "MEMORY OK" in scr and r.startswith("0/"), f"{scr[4:6]} {r}")
@@ -1213,14 +1479,14 @@ def main():
     check("MEM finds a byte that doesn't hold ($9000)", any(x.endswith("FIRST AT 36864") for x in scr),
           f"{scr[-2:]}")
 
-    # ---- the joystick: F6 (SHIFT+F5) switches the layouts
+    # ---- the joystick: F3 switches the layouts
     m = Machine(int_wired=True)
     m.boot()
     lb = m.lbl
     kpage = lb["kpage"]
 
-    def f6(frames=3):                            # SHIFT+F5 down, then up; SHIFT's row
-        m.keys = {C64NAMES["LSHIFT"], C64NAMES["F5"]}   # bit as the program sees it meanwhile
+    def f3(frames=3):                            # F3 down, then up; SHIFT's row
+        m.keys = {C64NAMES["F3"]}                # bit as the program sees it meanwhile
         m.run(frames)
         shift = m.z.memory[kpage + 0xFE] & 1
         m.keys = set()
@@ -1228,34 +1494,45 @@ def main():
         return shift
 
     def joyrow(keys):                            # the top row as screen() shows it
-        return (" joystick  " + " ".join(n + k for n, k in zip("udlrf", keys))).ljust(27) + "  f6"
+        return (" joystick  " + " ".join(n + k for n, k in zip("udlrf", keys))).ljust(27) + "  f3"
 
     rows, shifts, reqs = [], [], []
     for _ in range(4):
-        shifts.append(f6())
+        shifts.append(f3())
         rows.append(m.screen()[0])
         reqs.append(m.z.memory[lb["monreq"]])
-    check("F6 with no keys taught stays on 5678+0, shown on the top row",
+    check("F3 with no keys taught stays on 5678+0, shown on the top row",
           rows == [joyrow("76580")] * 4 and m.z.memory[lb["joyidx"]] == 0, f"{rows}")
-    check("F6 is not the monitor, and SHIFT held for it doesn't reach the program",
+    check("F3 is not the monitor, and gives the program no SHIFT",
           reqs == [0] * 4 and shifts == [1] * 4, f"monreq {reqs}, SHIFT bit {shifts}")
     m.run(100)
 
-    mc = lb["mon_call"]                          # BREAK-1's F5 check: SHIFT+F5 isn't F5
+    mc = lb["mon_call"]                          # BREAK-1's F5 check: F3 isn't F5
     keep = m.z.memory[mc]
     m.z.memory[mc] = 0xC9
     m.z.memory[lb["f5down"]] = 0
     edit = m.z.memory[lb["edit"]]                # (brk says a program runs: the
-    m.keys = {C64NAMES["LSHIFT"], C64NAMES["F5"]}   # editor's state back afterwards)
+    m.keys = {C64NAMES["F3"]}                    # editor's state back afterwards)
     m.call(lb["brk"], resume=True)
     took = m.z.memory[lb["f5down"]]
+    m.z.memory[lb["f5down"]] = 1                 # F3 taken by scan, still down: BREAK-1
+    m.call(lb["brk"], resume=True)               # leaves it (else a held F3 would come
+    kept = m.z.memory[lb["f5down"]]              # again and again in a FAST program)
     m.keys = set()
     m.z.memory[mc] = keep
     m.z.memory[lb["f5down"]] = 0
     m.z.memory[lb["edit"]] = edit
     m.z.memory[0x00FE] = lb["kall_rom"]
     m.run(10)
-    check("F6 in BREAK-1 is not the monitor", took == 0, f"f5down {took}")
+    check("F3 in BREAK-1 is not the monitor, and leaves F3's down for scan", took == 0 and kept == 1,
+          f"f5down {took}, held {kept}")
+    m.keys = {C64NAMES["LSHIFT"], C64NAMES["F5"]}
+    m.run(3)
+    m.keys = set()
+    m.run(10)
+    check("SHIFT+F5 (F6) is F5: the monitor (here not on the disk: said on the top row)",
+          m.screen()[0].strip().startswith("no zx64mon"), f"{m.screen()[0]!r}")
+    m.run(150)
 
     for line in ("5 L A SHIFT+L 0", "1 0 L A SHIFT+L A SHIFT+K 1", "2 0 G 1 0"):
         m.type(line + " NEWLINE")                # 5 LET A=0, 10 LET A=A+1, 20 GOTO 10
@@ -1267,13 +1544,13 @@ def main():
 
     def aval():                                  # A's value, as the calculator holds it
         return bytes(m.z.memory[m.peek16(0x4010) + 1:m.peek16(0x4010) + 6])
-    m.z.memory[lb["joyhave"]] = 1                # as if taught: F6 switches
+    m.z.memory[lb["joyhave"]] = 1                # as if taught: F3 switches
     a1 = aval()
-    f6()
+    f3()
     m.run(20)
-    check("a tap of F6 doesn't stop the program", aval() != a1 and m.z.memory[lb["joyidx"]] == 1,
+    check("a tap of F3 doesn't stop the program", aval() != a1 and m.z.memory[lb["joyidx"]] == 1,
           f"joyidx {m.z.memory[lb['joyidx']]}")
-    f6()                                         # back to 5678+0 for the stick below
+    f3()                                         # back to 5678+0 for the stick below
     bad = []
     for d in STICK:
         kb, sch = m.z.memory[lb["kbuf"]], m.z.memory[lb["scheme"]]
@@ -1323,22 +1600,22 @@ def main():
     m.keys = set()
     m.until(m.ready, 300, "the key wait")
 
-    f6()                                         # the custom layout (as if taught)
+    f3()                                         # the custom layout (as if taught)
     m.tap("F7", frames=10)
     m.until(lambda: m.cursor() and m.ready(), 600, "the K cursor after F7")
     after_f7 = m.z.memory[lb["joyidx"]]
-    m.tap("F3", frames=10)
-    m.until(lambda: m.cursor() and m.ready(), 600, "the K cursor after F3")
+    m.tap("F8", frames=10)
+    m.until(lambda: m.cursor() and m.ready(), 600, "the K cursor after F8")
     after_f3 = m.z.memory[lb["joyidx"]]
     for _ in range(2):                           # 32K, 1K, back to 16K
-        m.tap("F3", frames=10)
-        m.until(lambda: m.cursor() and m.ready(), 600, "the K cursor after F3")
-    check("F7 and F3 keep the layout", after_f7 == 1 and after_f3 == 1, f"after F7 {after_f7}, F3 {after_f3}")
+        m.tap("F8", frames=10)
+        m.until(lambda: m.cursor() and m.ready(), 600, "the K cursor after F8")
+    check("F7 and F8 keep the layout", after_f7 == 1 and after_f3 == 1, f"after F7 {after_f7}, F8 {after_f3}")
     m.z.memory[lb["joyidx"]] = m.z.memory[lb["joyhave"]] = 0   # nothing taught yet
 
-    # ---- the joystick: F6 held a second teaches a layout, the program frozen
-    def hold6():                                 # SHIFT+F5 down 60 frames, then up
-        m.keys = {C64NAMES["LSHIFT"], C64NAMES["F5"]}
+    # ---- the joystick: F3 held a second teaches a layout, the program frozen
+    def hold3():                                 # F3 down 60 frames, then up
+        m.keys = {C64NAMES["F3"]}
         m.run(60)
         m.keys = set()
         m.run(5)
@@ -1358,11 +1635,11 @@ def main():
     m.run(3)
     m.keys = set()
     m.run(30)
-    hold6()
+    hold3()
     a1 = aval()
     m.run(50)
     asked = m.screen()[0]
-    check("hold F6: the program stops, the top row asks for up", aval() == a1 and asked == joyrow("?----"),
+    check("hold F3: the program stops, the top row asks for up", aval() == a1 and asked == joyrow("?----"),
           f"{asked!r}")
     rows = []
     for k in ("R", "F", "J", "K"):
@@ -1384,7 +1661,7 @@ def main():
           aval() != a1 and m.peek16(0x4025) == 0xFFFF and set(inr.values()) == {0xFF},
           f"LAST_K ${m.peek16(0x4025):04X}, {inr}")
 
-    hold6()
+    hold3()
     answer("CRSRRIGHT")
     answer("LSHIFT")
     for _ in range(2):
@@ -1396,7 +1673,7 @@ def main():
           f"{cus().hex()}, SPACE's cell ${space:02X}")
 
     before = (cus(), m.z.memory[lb["joyidx"]])
-    hold6()
+    hold3()
     answer("R")
     a1 = aval()
     answer("F7")
@@ -1406,21 +1683,21 @@ def main():
     m.run(5)
     check("F7 at a prompt does nothing; F5 gives up, the layout as it was",
           at_f7 == (joyrow("r?---"), True) and (cus(), m.z.memory[lb["joyidx"]]) == before,
-          f"{at_f7} {cus().hex()} joyidx {m.z.memory[lb['joyidx']]}, f6old {m.z.memory[lb['f6old']]}, before {before[0].hex()} {before[1]}")
+          f"{at_f7} {cus().hex()} joyidx {m.z.memory[lb['joyidx']]}, f3old {m.z.memory[lb['f3old']]}, before {before[0].hex()} {before[1]}")
 
     seen = []
     for _ in range(4):
-        f6()
+        f3()
         seen.append(m.z.memory[lb["joyidx"]])
-    m.keys = {C64NAMES["LSHIFT"], C64NAMES["F5"]}
+    m.keys = {C64NAMES["F3"]}
     m.run(20)
     m.keys = set()
     m.run(10)
     short = (m.z.memory[lb["joyidx"]], m.screen()[0])
-    check("F6 switches 5678+0 and the custom layout once taught; a short hold is a tap",
+    check("F3 switches 5678+0 and the custom layout once taught; a short hold is a tap",
           seen == [0, 1, 0, 1] and short == (0, joyrow("76580")), f"{seen} {short}")
 
-    hold6()                                      # the stick at a prompt is no answer
+    hold3()                                      # the stick at a prompt is no answer
     for joy in ({"up"}, {"fire"}):
         m.joy = joy
         m.run(10)
@@ -1441,7 +1718,7 @@ def main():
     m.keys = set()
     m.until(m.ready, 300, "the key wait")
     m.type("SHIFT+0")                            # (RUBOUT: an empty edit line)
-    hold6()
+    hold3()
     for k in ("R", "F", "J", "K", "L"):
         answer(k)
     m.until(m.ready, 300, "the key wait")
@@ -1454,7 +1731,7 @@ def main():
     m.boot()
     m.z.memory[0xF000 + 0x02A6] = 1                          # the kernal's PAL flag
     for name in ("speed", "pause", "mem"):
-        m.drive.files[name.upper().encode()] = open(os.path.join(ROOT, "build", name + ".p"), "rb").read()
+        m.drive.files[name.upper().encode()] = open(os.path.join(ROOT, "build", "obj", name + ".p"), "rb").read()
     r = enter(m, "J SHIFT+P S P E E D SHIFT+P")
     scr = m.screen()
     frames = next((int(x.split()[0]) for x in scr if x.endswith(" FRAMES")), None)
@@ -1492,7 +1769,7 @@ def main():
         m.until(m.ready, 200, "the key wait")
         m.run(5)
         return seen, m.fast_irqs - fi, report(m), m.screen()
-    m.drive.files[b"FAST"] = open(os.path.join(ROOT, "build", "fast.p"), "rb").read()
+    m.drive.files[b"FAST"] = open(os.path.join(ROOT, "build", "obj", "fast.p"), "rb").read()
     m.type("J SHIFT+P F A S T SHIFT+P")
     seen, irqs, r, scr = fast_run(C64KEY[ZXKEY["SPACE"]])
     check("FAST: the picture holds while it counts (100 only once SLOW), FRAMES stands still, no IRQ; "
@@ -1506,10 +1783,10 @@ def main():
     check("no stray IRQs counted", not any(stray), f"{stray}")
 
     # ---- the monitor, zx64mon: F5 loads it from the disk the first time
-    mon = open(os.path.join(ROOT, "build", "zx64mon.prg"), "rb").read()
-    mon2 = open(os.path.join(ROOT, "build", "zx64mon2.prg"), "rb").read()
+    mon = open(os.path.join(ROOT, "build", "obj", "zx64mon.prg"), "rb").read()
+    mon2 = open(os.path.join(ROOT, "build", "obj", "zx64mon2.prg"), "rb").read()
     mlb = {k: v for k, v in (ln.split(":\tequ $") for ln in
-                             open(os.path.join(ROOT, "build", "zx64mon.lbl")).read().split("\n") if ln)}
+                             open(os.path.join(ROOT, "build", "obj", "zx64mon.lbl")).read().split("\n") if ln)}
     mlb = {k.lower(): int(v, 16) for k, v in mlb.items()}
     m = Machine(int_wired=True)
     m.boot()
@@ -1653,7 +1930,7 @@ def main():
           "a reversed space at the text's end is text",
           mem[:12] == zxs("HELLO ") + bytes(c | 0x80 for c in zxs("WORLD")) + b"\xFF"
           and mem[0x10:0x12] == zxs("AB") and mem[0x20:0x22] == zxs("X") + b"\x80", mem.hex())
-    boot = open(os.path.join(ROOT, "build", "zx81.prg"), "rb").read()[2:2 + 0x0F]
+    boot = open(os.path.join(ROOT, "build", "obj", "zx64.prg"), "rb").read()[2:2 + 0x0F]
     check("scrolling clears the new bottom row, and nothing past the screen (C64 $07E8-$080F: the "
           "sprite pointers, the boot file's start)", m.mscreen()[-1] == "" and
           bytes(m.z.memory[0xF801:0xF810]) == boot and m.z.memory[0xF7F8] != 0x20,
@@ -1915,13 +2192,15 @@ def main():
     check("S: where each kind of instruction goes next (JR, DJNZ, CALL, RET, JP (HL), RST ...); "
           "RST $38, a call into zx64 and JR to itself refused", not bad, f"wrong: {bad}")
 
-    m = Machine(int_wired=True)                  # a C64 reset keeps RAM: the last
+    stub = open(os.path.join(ROOT, "build", "obj", "zx81.prg"), "rb").read()
+    m = Machine(int_wired=True, prg=stub)        # a C64 reset keeps RAM: the last
     m.ram[0x4000:0x4000 + len(mon) - 2] = mon[2:]   # session's monitor, its screen
     m.ram[0xF000:0xF000 + len(mon2) - 2] = mon2[2:]  # cleared once (inited), and
     m.ram[mlb["inited"] + 0x1000] = 1                 # BASIC's text on it
     m.ram[mlb["crow"] + 0x1000] = 12
     m.ram[0x0400:0x0400 + 19] = bytes(ord(c) & 0x3F for c in "THE QUICK BROWN FOX")
-    m.boot()
+    m.drive.files[b"ZX64"] = open(os.path.join(ROOT, "build", "obj", "zx64.prg"), "rb").read()
+    m.boot()                                     # by the boot file, on a plain drive
     m.drive.files[b"ZX64MON"] = mon
     m.drive.files[b"ZX64MON2"] = mon2
     opens = m.drive.opens
@@ -2006,7 +2285,7 @@ def main():
           f"{hit} {regs[:10]!r} {s1[:10]!r} {s2[:10]!r} $7100={m.z.memory[0x7100]} {report(m)} "
           f"$7002=${m.z.memory[0x7002]:02X}")
 
-    m.drive.files[b"SPEED"] = open(os.path.join(ROOT, "build", "speed.p"), "rb").read()
+    m.drive.files[b"SPEED"] = open(os.path.join(ROOT, "build", "obj", "speed.p"), "rb").read()
     enter(m, "J SHIFT+P S P E E D SHIFT+P")
     check("LOAD with a breakpoint set: its byte back first, none left armed",
           m.z.memory[0x7002] == 0x3C and m.z.memory[lb["bpcnt"]] == 0, f"$7002=${m.z.memory[0x7002]:02X}")
@@ -2257,7 +2536,7 @@ def main():
 
     # L and W without addresses: a program, as BASIC's LOAD and SAVE; with
     # them, memory as a PRG. A file that isn't a program is refused
-    speed = open(os.path.join(ROOT, "build", "speed.p"), "rb").read()
+    speed = open(os.path.join(ROOT, "build", "obj", "speed.p"), "rb").read()
     big = bytearray(speed)
     big[11:13] = (0x8100).to_bytes(2, "little")  # E_LINE past RAMTOP
     m = Machine(int_wired=True)
@@ -2332,6 +2611,109 @@ def main():
           len(hello) > 100 and all(g[0].endswith("LD DE,$408B") and g[1] == basic[0] and g[2] == "0/10"
                                    and g[3] == "HELLO WORLD" for g in got), f"{len(hello)} {got} {basic[0]}")
 
+    # ---- JiffyDOS in zx64: LOAD (NAME.P too), F7's ROM, F5's monitor, and
+    # the monitor's L and $ on its own screen (VIC bank 0, y-scroll 3)
+    m = Machine(int_wired=True, jiffy=True)
+    m.boot()
+    prog = open(os.path.join(ROOT, "build", "obj", "speed.p"), "rb").read()
+    m.drive.files[b"SPD.P"] = prog
+    sent, opens = m.iec.sent, m.drive.opens
+    m.barlog = []
+    r = enter(m, "J SHIFT+P S P D SHIFT+P")
+    eline = prog[11] | prog[12] << 8                         # the file's E_LINE (it runs itself)
+    dfile = prog[3] | prog[4] << 8
+    check("JiffyDOS: LOAD \"SPD\" finds SPD.P (SPD itself not found by JiffyDOS either), loads it by "
+          "JiffyDOS with the bar, the drive let go",
+          r and r.startswith("0/") and bytes(m.z.memory[0x407D:dfile]) == prog[0x407D - 0x4009:dfile - 0x4009]
+          and m.iec.sent - sent == eline - 0x4009 and m.drive.opens == opens + 2 and m.barlog
+          and not m.channels and m.iec.state == "idle" and m.ram[jl["JFLAG"]] == 0,
+          f"{r}, {m.iec.sent - sent} bytes by JiffyDOS of {eline - 0x4009}, {m.drive.opens - opens} opens, "
+          f"bus {m.iec.state}")
+    r = enter(m, "J SHIFT+P N O N E SHIFT+P")
+    check("JiffyDOS: LOAD of a missing file: report D, nothing left open", r and r.startswith("D/")
+          and not m.channels and m.iec.state == "idle", f"{r}, bus {m.iec.state}")
+    rom = bytes(m.z.memory[0x0000:0x2000])
+    m.drive.files[b"ZX64"] = open(os.path.join(ROOT, "build", "obj", "zx64.prg"), "rb").read()
+    m.z.memory[0x0123] ^= 0x55
+    sent = m.iec.sent
+    m.tap("F7", 3)
+    m.until(lambda: m.cursor() and m.ready(), 600, "the K cursor after F7")
+    check("JiffyDOS: F7 reads the ROM again by it (ZX64's first $2801 bytes)",
+          bytes(m.z.memory[0x0005:0x2000]) == rom[0x0005:] and m.iec.sent - sent == 0x2801
+          and not m.channels, f"{m.iec.sent - sent} bytes")
+    m.drive.files[b"ZX64MON"] = mon
+    m.drive.files[b"ZX64MON2"] = mon2
+    sent = m.iec.sent
+    m.tap("F5")
+    check("JiffyDOS: F5 loads zx64mon's two files by it, the monitor runs",
+          bytes(m.z.memory[0x3000:mlb["kmods"]]) == mon[2:mlb["kmods"] - 0x3000 + 2]
+          and m.iec.sent - sent == len(mon) + len(mon2) and m.mscreen()[0].startswith("ZX64MON"),
+          f"{m.iec.sent - sent} bytes of {len(mon) + len(mon2)}, {m.mscreen()[0]!r}")
+    row = lambda: m.z.memory[mlb["crow"]]
+    t1 = b"\x00\x80" + bytes(range(1, 200))
+    m.drive.files[b"T1"] = t1
+    sent = m.iec.sent
+    m.mtype('L "T1" 7100\r', settle=30)
+    l1 = (bytes(m.z.memory[0x7100:0x7100 + len(t1) - 2]) == t1[2:]
+          and m.mscreen()[row() - 1] == f"LOADED 7100-{0x7100 + len(t1) - 3:04X}")
+    check("JiffyDOS: the monitor's L by it on the monitor's screen: the VIC bank kept (0), the guard "
+          "on y-scroll 3", l1 and m.iec.sent - sent == len(t1) and jbits(m)[3] == 4
+          and jbits(m) == portbits(m) and m.ram[0xDD00] & 3 == 3 and m.z.memory[0xCD00] & 3 == 3,
+          f"L {l1}, {m.iec.sent - sent} bytes, JNY {jbits(m)[3]}, $DD00 ${m.ram[0xDD00]:02X}")
+    m.mkey("HOME", "LSHIFT")
+    m.mtype("$\r", settle=60)
+    scr = m.mscreen()
+    check("JiffyDOS: $ lists (its start by JiffyDOS, a line at a time by the kernal)",
+          scr[1] == '0 "ZX64            " 81 2A' and any('"T1"' in r and r.endswith("PRG") for r in scr)
+          and any(r.endswith("BLOCKS FREE.") for r in scr) and not m.channels, f"{scr[:3]}")
+
+    # ---- the boot file, ZX81 (c64/stub.asm): ZX64 by JiffyDOS, and the
+    # monitor with it; a plain drive the kernal's way, the monitor left
+    body = open(os.path.join(ROOT, "build", "obj", "zx64.prg"), "rb").read()
+    def stubboot(jiffy, files):
+        m = Machine(int_wired=True, prg=stub, jiffy=jiffy)
+        m.drive.files.update(files)
+        m.boot()
+        return m
+    every = {b"ZX64": body, b"ZX64MON": mon, b"ZX64MON2": mon2}
+    m = stubboot(True, every)
+    said = m.printed.replace("\r", "/")
+    opens = m.drive.opens
+    m.tap("F5")
+    check("the boot file on a JiffyDOS drive: ZX64 and both monitor files by JiffyDOS, said on the "
+          "screen; zx64 starts, and the first F5 needs no disk",
+          said == "LOADING ZX64/LOADING ZX64MON/LOADING ZX64MON2/" and m.iec.sent == len(body) + len(mon) + len(mon2)
+          and m.drive.opens == opens and m.mscreen()[0].startswith("ZX64MON"),
+          f"{said!r}, {m.iec.sent} bytes by JiffyDOS, F5 {m.drive.opens - opens} opens, {m.mscreen()[0]!r}")
+    m = stubboot(False, every)
+    said = m.printed.replace("\r", "/")
+    opens = m.drive.opens
+    m.tap("F5")
+    check("the boot file on a plain drive: ZX64 the kernal's way, the monitor left for F5",
+          said == "LOADING ZX64/" and m.iec.sent == 0 and m.drive.opens == opens + 2
+          and m.mscreen()[0].startswith("ZX64MON"), f"{said!r}, F5 {m.drive.opens - opens} opens")
+    m = Machine(int_wired=True, prg=stub, jiffy=True)
+    m.cpu.sp = 0xF6
+    m.call_6510(2061)
+    said = m.printed.replace("\r", "/")
+    m2 = stubboot(True, {b"ZX64": body})
+    loader = bytes(m.ram[0xCE00:0xD000])
+    bad = []
+    for at in (0xCE00, 0x0300):                  # over the loader; over the JiffyDOS reader
+        m3 = Machine(int_wired=True, prg=stub, jiffy=True)
+        m3.drive.files[b"ZX64"] = bytes([at & 0xFF, at >> 8]) + b"\xEA" * 40
+        m3.cpu.sp = 0xF6
+        m3.call_6510(2061)
+        if m3.printed.replace("\r", "/") != "LOADING ZX64/ZX64 NOT LOADED/" or m3.ram[at:at + 40] == b"\xEA" * 40:
+            bad.append(f"${at:04X}: {m3.printed!r}")
+        if at == 0xCE00 and bytes(m3.ram[0xCE00:0xD000]) != loader:
+            bad.append("the loader written over")
+    check("the boot file: a ZX64 that would load over the loader ($CE00) or the JiffyDOS reader ($0300): "
+          "refused, said, back to BASIC", not bad, f"{bad}")
+    check("the boot file: no ZX64 on the disk: said, back to BASIC; no monitor on it: zx64 starts all the same",
+          said == "LOADING ZX64/ZX64 NOT LOADED/" and not m.z80_on and m2.cursor()
+          and m2.ram[0x4003] == 0, f"{said!r}, {m2.printed!r}")
+
     # ---- tools/pcheck.py, on a program made for it: each IN and OUT, and
     # what zx64 makes of it
     import pcheck
@@ -2348,7 +2730,7 @@ def main():
         "C9 DBFE DF")                            # RET; data: IN-like bytes, the table
     t = code.index(bytes.fromhex("210000")) + 1
     code[t:t + 2] = (16514 + len(code) - 1).to_bytes(2, "little")
-    path = os.path.join(ROOT, "build", "pcheck-test.p")
+    path = os.path.join(ROOT, "build", "obj", "pcheck-test.p")
     open(path, "wb").write(p_file('10 REM {bin:t}\n20 RAND USR VAL "16514"\n30 PRINT USR 8192\n',
                                   blobs={"t": bytes(code)}))
     found = pcheck.check(path)[0]
