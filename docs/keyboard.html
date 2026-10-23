@@ -4,8 +4,9 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <!-- zx64: the ZX81's key legends on the C64 keyboard, as zx64 maps them.
-     Open in a browser. Legends decoded from the ZX81 ROM's key tables;
-     no ROM bytes in here. -->
+     Open in a browser. Legends decoded from the ZX81 ROM's key tables
+     (K-UNSHIFT, K-SHIFT, K-FUNCT, K-GRAPH and the token table); no ROM
+     bytes in here. -->
 <title>zx64 Keyboard Overlay</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;600;800&family=Archivo+Narrow:wght@500;600;700&family=JetBrains+Mono:wght@500&display=swap">
@@ -23,7 +24,6 @@ body{background:var(--bg);color:var(--fg);font-family:var(--f-display);font-size
 header{display:grid;gap:6px}
 h1{font-size:clamp(26px,4vw,38px);font-weight:800;letter-spacing:-.01em;margin:0;text-wrap:balance}
 h1 span{color:var(--accent)}
-.lede{margin:0;color:var(--muted);max-width:68ch}
 h2{font-size:12px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);margin:0 0 10px;font-weight:600}
 code,kbd{font-family:var(--f-mono);font-size:.88em}
 kbd{border:1px solid var(--line);border-bottom-width:2px;border-radius:4px;padding:0 5px;background:var(--surface);white-space:nowrap}
@@ -91,7 +91,6 @@ kbd{border:1px solid var(--line);border-bottom-width:2px;border-radius:4px;paddi
 .extras th{text-align:left;font-weight:600;color:var(--muted);font-size:12px;letter-spacing:.06em;text-transform:uppercase;padding:0 12px 6px 0;border-bottom:1px solid var(--line)}
 .extras td{padding:6px 12px 6px 0;border-bottom:1px solid var(--line);vertical-align:top}
 .tbl{overflow-x:auto}
-footer{color:var(--muted);font-size:13px;max-width:72ch}
 @media (prefers-reduced-motion:no-preference){.k .cap{transition:outline-color .15s}}
 
 /* print: black on white, A4 landscape, no finder. docs/keyboard.pdf is this,
@@ -113,7 +112,6 @@ footer{color:var(--muted);font-size:13px;max-width:72ch}
   .cap .c64{font-size:8px;letter-spacing:0;white-space:nowrap;line-height:1}
   .k .kw,.k .fn{font-size:9.5px;line-height:13px}
   .noprint{display:none}
-  header .lede{font-size:11px}
   h1{font-size:24px}
   h2{margin-bottom:6px}
   .anat{font-size:11px;gap:4px 18px}
@@ -128,7 +126,6 @@ footer{color:var(--muted);font-size:13px;max-width:72ch}
   .index tbody{display:block;columns:2;column-gap:12px}
   .index tr{display:flex;justify-content:space-between;break-inside:avoid;border-bottom:1px solid var(--line)}
   .index td{border:0;padding:0}
-  footer{font-size:10px}
   .cap{box-shadow:none}
   .k .fn{font-style:italic}
   .k.extra .cap{border-width:2px;border-color:#000}
@@ -138,7 +135,7 @@ footer{color:var(--muted);font-size:13px;max-width:72ch}
   .cap svg{filter:invert(1)}
   .anat .sw{display:none}
   section{break-inside:avoid}
-  section[aria-labelledby="h-x"]{break-before:page}
+  #extras{break-before:page}
   kbd{border-color:#666}
 }
 </style>
@@ -147,7 +144,6 @@ footer{color:var(--muted);font-size:13px;max-width:72ch}
 <div class="wrap">
 <header>
   <h1>zx64 <span>keyboard</span></h1>
-  <p class="lede">The ZX81's legends on the C64 keys. Letters, digits and <kbd>.</kbd> are where the C64 has them; everything else is the ZX81's own SHIFT, keyword and function layer. Read from your ROM's key tables.</p>
 </header>
 
 <section aria-labelledby="h-find">
@@ -159,8 +155,7 @@ footer{color:var(--muted);font-size:13px;max-width:72ch}
   <ul class="answers" id="answers" aria-live="polite"></ul>
 </section>
 
-<section aria-labelledby="h-kb">
-  <h2 id="h-kb">On the C64 keyboard</h2>
+<section>
   <div class="kbwrap"><div class="kb" id="kb"></div></div>
   <div class="anat" style="margin-top:12px">
     <span><span class="sw" style="background:#e7e4dd;outline:1px solid #888"></span>above the key: keyword, at the <b>K</b> cursor</span>
@@ -171,8 +166,7 @@ footer{color:var(--muted);font-size:13px;max-width:72ch}
   </div>
 </section>
 
-<section aria-labelledby="h-modes">
-  <h2 id="h-modes">The cursor tells you what a key gives</h2>
+<section>
   <div class="modes">
     <div class="mode"><h3><span class="tag inv">K</span>Keyword</h3><p>Start of a line, or after THEN. A letter gives the keyword above it: <kbd>P</kbd> is PRINT, <kbd>K</kbd> is LIST. Digits give a line number.</p></div>
     <div class="mode"><h3><span class="tag inv">L</span>Letters</h3><p>Everywhere else. Keys give their letter; SHIFT gives the red legend: <kbd>SHIFT</kbd> <kbd>P</kbd> is <code>"</code>, <kbd>SHIFT</kbd> <kbd>L</kbd> is <code>=</code>.</p></div>
@@ -181,8 +175,7 @@ footer{color:var(--muted);font-size:13px;max-width:72ch}
   </div>
 </section>
 
-<section aria-labelledby="h-x">
-  <h2 id="h-x">C64 keys that zx64 adds</h2>
+<section id="extras">
   <div class="tbl"><table class="extras">
     <thead><tr><th>C64 key</th><th>ZX81</th></tr></thead>
     <tbody>
@@ -193,11 +186,12 @@ footer{color:var(--muted);font-size:13px;max-width:72ch}
       <tr><td><kbd>SPACE</kbd> <kbd>RUN/STOP</kbd></td><td>BREAK while a program runs</td></tr>
       <tr><td><kbd>SHIFT LOCK</kbd></td><td>Holds the left SHIFT down, as on the C64</td></tr>
       <tr><td><kbd>SHIFT 1</kbd></td><td>EDIT: brings the current line down to be changed</td></tr>
-      <tr><td><kbd>F1</kbd></td><td>Type-ahead on or off. On (the default), every key is taken however fast you type, as on a C64; off, the ROM's own way: one key at a time, all keys up in between. The top row says which, for 2 seconds</td></tr>
-      <tr><td><kbd>F2</kbd></td><td>(SHIFT+F1) The colours: black on white, white on black, green screen, amber, black on green, the C64's own. The top row names each; F7, F3 and the monitor keep it</td></tr>
-      <tr><td><kbd>F3</kbd></td><td>Memory: 16K, 32K, 1K, 16K again. Like swapping the RAM pack with the power off: the ZX81 starts again and the program is gone. The top row says the size</td></tr>
-      <tr><td><kbd>F5</kbd></td><td>The machine code monitor: stops the ZX81 where it is and shows its registers, on a C64 screen of its own. F5 again, or X, carries on</td></tr>
-      <tr><td><kbd>F7</kbd></td><td>Reset: the ZX81 starts again, as at power on, when the key comes up. Works at the prompt, in SLOW mode, and between BASIC statements in FAST mode</td></tr>
+      <tr><td><kbd>F1</kbd></td><td>Type-ahead on or off</td></tr>
+      <tr><td><kbd>F2</kbd></td><td>The next colour scheme</td></tr>
+      <tr><td><kbd>F3</kbd></td><td>Joystick keys: 5678+0 or your own; hold it to teach your own</td></tr>
+      <tr><td><kbd>F5</kbd></td><td>The monitor; F5 or X goes back</td></tr>
+      <tr><td><kbd>F7</kbd></td><td>Reset</td></tr>
+      <tr><td><kbd>F8</kbd></td><td>Memory: 16K, 32K, 1K (resets)</td></tr>
     </tbody>
   </table></div>
 </section>
@@ -207,7 +201,6 @@ footer{color:var(--muted);font-size:13px;max-width:72ch}
   <div class="index" id="index"></div>
 </section>
 
-<footer>Legends are decoded from the ROM's tables (K-UNSHIFT, K-SHIFT, K-FUNCT, K-GRAPH and the token table), so they match what your zx64 build does. The C64's own <kbd>+</kbd> <kbd>-</kbd> <kbd>=</kbd> <kbd>:</kbd> and so on do nothing: use the ZX81's SHIFT legends.</footer>
 </div>
 
 <script>
@@ -255,9 +248,9 @@ const K = {"Z":{"sh":":","kw":"COPY","fn":"LN"},
   "B":{"sh":"*","kw":"SCROLL","fn":"INKEY$"}};
 const rows = [
   [{c:'←',x:'← left'},'1','2','3','4','5','6','7','8','9','0',{c:'+'},{c:'-'},{c:'£'},{c:'CLR HOME'},{c:'INST DEL',x:'RUBOUT'},{c:'F1',x:'TYPE-AHEAD',sub:'⇧ COLOURS',f:1,w:1.5}],
-  [{c:'CTRL',w:1.5},'Q','W','E','R','T','Y','U','I','O','P',{c:'@'},{c:'*'},{c:'↑',x:'↑ up'},{c:'RESTORE',w:1.5},{c:'F3',x:'RAM SIZE',f:1,w:1.5}],
+  [{c:'CTRL',w:1.5},'Q','W','E','R','T','Y','U','I','O','P',{c:'@'},{c:'*'},{c:'↑',x:'↑ up'},{c:'RESTORE',w:1.5},{c:'F3',x:'JOYSTICK',f:1,w:1.5}],
   [{c:'RUN STOP',x:'BREAK',w:1.25},{c:'SHIFT LOCK',x:'SHIFT lock'},'A','S','D','F','G','H','J','K','L',{c:':'},{c:';'},{c:'='},{z:'NEWLINE',c:'RETURN',w:1.75},{c:'F5',x:'MONITOR',f:1,w:1.5}],
-  [{c:'C='},{c:'SHIFT',x:'SHIFT',w:1.75},'Z','X','C','V','B','N','M',{c:','},'.',{c:'/'},{c:'SHIFT',x:'SHIFT',w:1.25},{c:'CRSR ⇕',x:'↓ ⇧↑'},{c:'CRSR ⇔',x:'→ ⇧←'},{c:'F7',x:'RESET',f:1,w:1.5}],
+  [{c:'C='},{c:'SHIFT',x:'SHIFT',w:1.75},'Z','X','C','V','B','N','M',{c:','},'.',{c:'/'},{c:'SHIFT',x:'SHIFT',w:1.25},{c:'CRSR ⇕',x:'↓ ⇧↑'},{c:'CRSR ⇔',x:'→ ⇧←'},{c:'F7',x:'RESET',sub:'⇧ RAM SIZE',f:1,w:1.5}],
   [{z:'SPACE',c:'also BREAK',w:9}]
 ];
 const capName = z => z==='NEWLINE' ? 'RETURN' : z;

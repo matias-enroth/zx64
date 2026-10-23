@@ -13,19 +13,25 @@
 ;   S              one step: the instruction at PC, then back here
 ;   A a text       assemble at a; ".A next" waits for the next (see cmd_a)
 ;   $              the directory
-;   L "NAME" [a]   load a file (to a)
-;   W "NAME" s e   write memory to a file
+;   L "NAME" [a]   load a program, as LOAD; a file to a
+;   W "NAME" [s e] save the program, as SAVE; memory to a file
 ;   @[text]        the drive's status; a DOS command
-;   : a b b ...    store bytes (M's lines, changed and RETURN pressed)
+;   : a b 'TEXT'   store bytes and ZX81 text (M's lines, hex or characters
+;                  changed and RETURN pressed); reversed characters inverse
+;   Z n            line 1 a REM of n bytes, from 16514 ($4082)
 ;   R              the registers, as a ";" and a "'" line to change
 ;   ; pc af bc de hl sp ix iy
 ;   ' af' bc' de' hl' i iff
 ;   G [a]          go on with the registers (at a); X the same
 ;   F s e b        fill          T s e d   transfer
 ;   C s e d        compare       H s e b b ... or H s e 'TEXT  hunt
+;   = n            n in hex, decimal and binary (+n decimal, %n binary)
 ;   ?              help
 ; The screen is edited as on a C64: the cursor keys, INST/DEL, CLR/HOME,
-; and RETURN takes the line the cursor is on. RUN/STOP stops a long
+; CTRL+HOME (the bottom row), RVS ON and OFF (CTRL+9, CTRL+0), and RETURN
+; takes the line the cursor
+; is on. CRSR UP/DOWN at the top and
+; bottom scroll an M or D listing (sc_up, sc_dn). RUN/STOP stops a long
 ; listing. F5 or X goes back to the ZX81.
 
         include "core.inc"      ; zx64's MON_RET, MONIFF, NOTBAD, CREAD, BP_OFF,
@@ -40,11 +46,31 @@ COLOUR:  equ $C800              ; C64 $D800
 MSCR:    equ $F400              ; C64 $0400, the monitor's screen
 MSTACK:  equ $D800              ; its stack, from $D7FF down: C64 $E400-$E7FF,
                                 ; free between the ZX81's screen and font
+; Buffers, at the stack's far end (not in the file): the line's screen
+; codes (rvor), the line as ASCII, bytes from ":", D's text, A's numbers'
+; kinds and places (see koff), a candidate's bytes, the text's numbers'
+; values, the text and a candidate's normalized, the keys
+LINERV:  equ $D400
+linebuf: equ LINERV+40          ; 41
+pat:     equ linebuf+41         ; 40
+dtext:   equ pat+40             ; 24
+klist:   equ dtext+24           ; 8
+cbuf:    equ klist+8            ; 4
+nval:    equ cbuf+4             ; 8
+cvals:   equ nval+8             ; 8
+ninp:    equ cvals+8            ; 40
+ncand:   equ ninp+40            ; 24
+kmat:    equ ncand+24           ; 8
+kprev:   equ kmat+8             ; 8, to $D4FD
 BORDERCOL: equ 14                ; the C64's colours: light blue on blue
 BACKCOL:  equ 6
 TEXTCOL:  equ 14
 
 K_RETURN: equ 13                ; key codes, as PETSCII
+K_SRET:  equ 141                ; SHIFT+RETURN
+K_RVSON: equ 18
+K_RVSOFF: equ 146
+K_BOTTOM: equ 4                 ; CTRL+HOME (no PETSCII of its own)
 K_DOWN:  equ 17
 K_HOME:  equ 19
 K_DEL:   equ 20
@@ -92,6 +118,7 @@ entry:  pop hl
         call BP_OFF             ; the breakpoints' bytes back
         xor a
         ld (mmode),a
+        ld (loaded),a
         ld a,(MONWHY)
         or a
         jr nz,en_bp
@@ -109,7 +136,7 @@ en_f5:  call scr_on
 en_hello:
         call lstart
         call putsi
-        db "ZX64MON ",0
+        db "#ZX64MON ",0
         ld hl,verstr
         call puts
         call putsi
@@ -127,7 +154,16 @@ main:   call getline
 leave:  call kup
         call scr_off
 leave_q:
-        call arm                ; the breakpoints, as RST $38s
+        ld a,(loaded)           ; a program loaded (L "NAME"): not back to
+        or a                    ; what ran, but to BASIC, as a report
+        jr z,lq1
+        ld hl,pgo
+        ld (r_pc),hl
+        xor a
+        ld (stepping),a
+        ld (gostep),a
+        ld (sbn),a
+lq1:    call arm                ; the breakpoints, as RST $38s
         ld sp,(r_sp)
         ld hl,(r_pc)
         push hl
@@ -156,6 +192,28 @@ leave_q:
         ld ix,(r_ix)
         ld iy,(r_iy)
         jp MON_RET
+
+; After L "NAME", leaving comes here, to go on as the ROM's LOAD does:
+; from the loaded NXTLIN (a program saved by a program line runs), else
+; report 0. The ROM's error exit, ERROR-3 ($0058), with L = $FF (no
+; error): ERR_NR, SP from ERR_SP, SLOW/FAST, and back to what is at
+; ERR_SP. That is $0676 while a program runs (the next line, or the
+; report), but the editor's key wait ($04CF) in the editor, where it
+; would spin (zx64's call is before it): so $0676 is put there first.
+; Not RST 8: it sets X_PTR, and a program going on with X_PTR set stops
+; with report C. FLAGS bit 7: run, not only check the syntax (the editor
+; clears it; LOAD runs as a command, with it set). PPC $FFFE: a command,
+; not a program's line (PPC isn't in the file). What ran is left behind,
+; as after BREAK.
+pgo:    set 7,(iy+$01)          ; FLAGS
+        ld hl,$FFFE
+        ld ($4007),hl           ; PPC
+        ld hl,($4002)           ; ERR_SP
+        ld (hl),$76
+        inc hl
+        ld (hl),$06
+        ld l,$FF
+        jp $0058
 
 ; ---------------------------------------------------------------- screen
 ; The ZX81's VIC settings are put back as c64/boot.asm makes them, not
@@ -271,8 +329,9 @@ dn_scr: ld hl,MSCR+40
         ld de,MSCR
         ld bc,960
         ldir
+        ex de,hl                ; DE: the last row (HL is past the screen)
         ld b,40
-dn_cl:  ld (hl),$20             ; HL: the last row
+dn_cl:  ld (hl),$20
         inc hl
         djnz dn_cl
 dn_done:
@@ -348,30 +407,31 @@ hx1:    jp pch
 
 ; A = a ZX81 character code, shown as itself: inverse ones in reverse,
 ; graphics and codes that are no character as "."
-pzx:    push hl
-        push de
+pzx:    push de
         ld d,a
-        and $40
-        ld a,'.'
-        jr nz,pz_asc
-        ld a,d
-        and $3F
-        ld hl,zx2asc
-        add a,l
-        ld l,a
-        jr nc,pz1
-        inc h
-pz1:    ld a,(hl)
-        cp $7F
-        jr nz,pz_asc
-        ld a,'.'
-pz_asc: call a2s
+        call zxch
+        call a2s
         bit 7,d
         jr z,pz_put
         or $80
 pz_put: call pscr
         pop de
-        pop hl
+        ret
+
+zxch:   push hl                 ; A: a ZX81 code -> the ASCII pzx shows it
+        bit 6,a                 ; as, not inverse
+        jr nz,zc_dot
+        and $3F
+        ld hl,zx2asc
+        add a,l
+        ld l,a
+        jr nc,zc1
+        inc h
+zc1:    ld a,(hl)
+        cp $7F
+        jr nz,zc_ret
+zc_dot: ld a,'.'
+zc_ret: pop hl
         ret
 
 ; HL: an I/O register, read three times: each bit as two of them have it.
@@ -544,7 +604,24 @@ gk_tab: add hl,de
         ld a,(hl)
         or a
         jp z,getkey             ; no key of ours
-        push af
+        ld e,a
+        ld a,(kmat+7)           ; CTRL (column 7, row 2): 9 is RVS ON, 0 RVS OFF,
+        and 4
+        ld a,e
+        jr nz,gk_ret
+        cp '9'
+        ld a,K_RVSON
+        jr z,gk_ret
+        ld a,e
+        cp '0'
+        ld a,K_RVSOFF
+        jr z,gk_ret
+        ld a,e                  ; HOME the bottom row
+        cp K_HOME
+        ld a,K_BOTTOM
+        jr z,gk_ret
+        ld a,e
+gk_ret: push af
         call curoff
         pop af
         ret
@@ -594,6 +671,7 @@ abort:  ld sp,MSTACK
 getline:
         xor a
         ld (curst),a
+        ld (rvs),a              ; RVS OFF, as RETURN does on a C64
         inc a
         ld (blinkc),a
 gl_key: call getkey
@@ -601,6 +679,8 @@ gl_key: call getkey
         jp z,gl_ret
         ld hl,gl_key            ; each of these comes back to gl_key
         push hl
+        cp K_SRET               ; SHIFT+RETURN: the next row, nothing taken,
+        jp z,down               ; as on the C64
         cp K_RIGHT
         jr z,crright
         cp K_LEFT
@@ -611,20 +691,28 @@ gl_key: call getkey
         jr z,crup
         cp K_HOME
         jr z,home
+        cp K_BOTTOM
+        jr z,bottom
         cp K_CLR
         jp z,cls
         cp K_DEL
         jr z,delch
         cp K_INST
-        jr z,insch
+        jp z,insch
         cp K_F5
         jp z,leave
+        cp K_RVSON
+        jr z,rvon
+        cp K_RVSOFF
+        jr z,rvoff
         cp ' '
         ret c
         cp $60
         ret nc
         call a2s                ; typed: at the cursor, which moves on to
-        push af                 ; column 39 at most
+        ld hl,rvs               ; column 39 at most; reversed after RVS ON
+        or (hl)
+        push af
         call cpos
         pop af
         ld (hl),a
@@ -635,13 +723,21 @@ crright:
         inc a
         ld (ccol),a
         ret
+rvon:   ld a,$80
+        jr rv_set
+rvoff:  xor a
+rv_set: ld (rvs),a
+        ret
 crleft: ld a,(ccol)
         or a
         ret z
         dec a
         ld (ccol),a
         ret
-crdown: ld a,(ccol)
+crdown: ld a,(crow)
+        cp 24
+        jp nc,sc_dn
+cd_row: ld a,(ccol)
         push af
         call down
         pop af
@@ -649,12 +745,15 @@ crdown: ld a,(ccol)
         ret
 crup:   ld a,(crow)
         or a
-        ret z
+        jr z,sc_up
         dec a
         ld (crow),a
         ret
+bottom: ld a,24
+        jr hm1
 home:   xor a
-        ld (crow),a
+hm1:    ld (crow),a
+        xor a
         ld (ccol),a
         ret
 delch:  ld a,(ccol)             ; the character left of the cursor out,
@@ -695,7 +794,192 @@ in_end: call cpos
         ld (hl),$20
         ret
 
+; Scrolling, as Super Snapshot's monitor does. CRSR UP on the top row,
+; an M or D line: the screen moves down and the line before it comes in.
+; CRSR DOWN on the bottom row: the line after the lowest M or D line, at
+; the bottom, the screen moved up; if the rows under that line are empty
+; or only the prompt's ".", the lines after it fill them down to the
+; bottom instead. The cursor stays on the bottom row; M and D alone then
+; go on after the last. No M or D line: as before.
+sc_up:  ld hl,MSCR
+        call rowmd
+        ret c
+        ld (sc_ty),a
+        ld a,(ccol)
+        push af
+        ld a,(dbnext)           ; D alone goes on from the bottom: as it was
+        push af
+        ld a,(sc_ty)
+        cp ':'
+        jr nz,su_d
+        ld hl,-8
+        add hl,de
+        jr su_put
+su_d:   call dback
+su_put: ld (a3),hl
+        ld hl,MSCR+959          ; rows 0-23 to 1-24 (scline clears row 0)
+        ld de,MSCR+999
+        ld bc,960
+        lddr
+        call scline
+        pop af
+        ld (dbnext),a
+        pop af
+        ld (ccol),a
+        ret
+
+sc_dn:  ld hl,MSCR+960          ; up from row 24, over empty rows and "."
+        ld b,24
+sd1:    call rowmt
+        jr nz,sd2
+        ld de,-40
+        add hl,de
+        dec b
+        jp m,cd_row
+        jr sd1
+sd2:    call rowmd
+        jp c,cd_row
+        ld (sc_ty),a
+        push bc
+        cp ':'
+        jr nz,sd_d
+        ld hl,8
+        jr sd_add
+sd_d:   call dcount             ; D: its bytes on the screen (a DB: 1)
+        ld c,0
+        ld a,b
+        dec a
+        jr nz,sd_db
+        ld a,(de)               ; RST $08 alone: the next is its report's DB
+        cp $CF
+        jr nz,sd_db
+        inc c
+sd_db:  ld a,c
+        ld (dbnext),a
+        ld l,b
+        ld h,0
+sd_add: add hl,de
+        ld (a3),hl
+        pop bc
+        ld a,(ccol)
+        push af
+        ld a,b
+        cp 24
+        jr nz,sd_in
+        call down               ; at the bottom: up a row
+        jr sd_put
+sd_in:  inc a                   ; the empty rows under it, to the bottom
+        ld (crow),a
+        call scline
+        ld (a3),hl
+        ld a,(crow)
+        cp 24
+        jr c,sd_in
+        jr sd_end
+sd_put: call scline
+sd_end: ld a,(sc_ty)
+        cp ':'
+        jr z,sd_m
+        ld (dnext),hl
+        jr sd_e
+sd_m:   ld (mnext),hl
+sd_e:   pop af
+        ld (ccol),a
+        ret
+
+scline: ld hl,(a3)              ; the line at a3 on the cursor's row, as
+        ld a,(sc_ty)            ; sc_ty: HL after it
+        cp ':'
+        jp z,mline
+        call ddec
+        jp dshow
+
+; HL: a row. Z if it is empty, or only "." in column 0.
+rowmt:  push hl
+        push bc
+        ld a,(hl)
+        cp '.'
+        jr nz,rt1
+        ld a,' '
+rt1:    cp ' '
+        jr nz,rt_x
+        ld b,39
+rt2:    inc hl
+        ld a,(hl)
+        cp ' '
+        jr nz,rt_x
+        djnz rt2
+rt_x:   pop bc
+        pop hl
+        ret
+
+; HL: a row. An M (".:") or D (".,") line: A ':' or ',', DE its address;
+; carry if not. Keeps BC, HL.
+rowmd:  push hl
+        push bc
+        ld a,(hl)
+        cp '.'
+        jr nz,rd_no
+        inc hl
+        ld a,(hl)
+        cp ':'
+        jr z,rd1
+        cp ','
+        jr nz,rd_no
+rd1:    ld c,a
+        ld de,0
+        ld b,4
+rd2:    inc hl
+        ld a,(hl)               ; screen code: A-F are 1-6
+        cp $20
+        jr nc,rm3
+        add a,$40
+rm3:    call hexval
+        jr c,rd_no
+        ex de,hl
+        add hl,hl
+        add hl,hl
+        add hl,hl
+        add hl,hl
+        or l
+        ld l,a
+        ex de,hl
+        djnz rd2
+        ld a,c
+        pop bc
+        pop hl
+        and a
+        ret
+rd_no:  pop bc
+        pop hl
+        scf
+        ret
+
+dcount: push hl                 ; HL: a D row -> B: its bytes (columns 7,
+        push de                 ; 10, 13, 16). Keeps DE, HL
+        ld de,7
+        add hl,de
+        ld b,0
+dc1:    ld a,(hl)
+        cp ' '
+        jr z,dc2
+        inc b
+        inc hl
+        inc hl
+        inc hl
+        ld a,b
+        cp 4
+        jr c,dc1
+dc2:    pop de
+        pop hl
+        ret
+
 gl_ret: call rowp
+        push hl                 ; the row as it is, for rvor
+        ld de,LINERV
+        ld bc,40
+        ldir
+        pop hl
         ld de,linebuf
         ld b,40
 gr1:    ld a,(hl)               ; screen codes back to ASCII
@@ -726,6 +1010,8 @@ ex_nx:  inc hl
         jr ex_sk
 ex_cmd: or a
         jp z,prompt             ; an empty line
+        cp '#'                  ; a line to read, not to run (headings and
+        ret z                   ; messages): no prompt, the line under it next
         inc hl
         ld (lptr),hl
         ld hl,cmds
@@ -793,15 +1079,21 @@ cmds:   db 'M'
         dw cmd_comma
         db '?'
         dw cmd_help
+        db '='
+        dw cmd_eq
+        db 'Z'
+        dw cmd_z
         db 0
 
-err:    ld sp,MSTACK            ; "?", and the prompt
-        call lstart
-        ld a,'?'
-        call pch
-        call down
+err:    ld sp,MSTACK            ; "#?", and the prompt
+        call qline
         call prompt
         jp main
+
+qline:  call lstart             ; "#?" on a line of its own (RETURN on it:
+        call putsi              ; nothing)
+        db "#?",0
+        jp down
 
 quietly:
         ld a,1
@@ -826,24 +1118,8 @@ cm_12:  ld hl,(a1)
 cm_end: ld (a2),de
 cm_line:
         call stopchk
-        call lstart
-        call putsi
-        db ".:",0
         ld hl,(a1)
-        call phex4
-        ld b,8
-cm_b:   call sp1
-        ld a,(hl)
-        call phex2
-        inc hl
-        djnz cm_b
-        call sp1
-        ld hl,(a1)
-        ld b,8
-cm_c:   ld a,(hl)
-        call pzx
-        inc hl
-        djnz cm_c
+        call mline
         call down
         ld hl,(a1)              ; where M alone goes on
         ld de,8
@@ -869,26 +1145,351 @@ cm_next:
         ret c                   ; past $FFFF
         jr cm_line
 
-; : a b b ...: up to 8 bytes from a (the rest of an M line is left alone).
+; HL: 8 bytes shown as an M line on the cursor's row, as ":" takes
+; them back; HL after them.
+mline:  call lstart
+        call putsi
+        db ".:",0
+        call phex4
+        push hl
+        ld b,8
+ml_b:   call sp1
+        ld a,(hl)
+        call phex2
+        inc hl
+        djnz ml_b
+        call sp1
+        pop hl
+        ld b,8
+ml_c:   ld a,(hl)
+        call pzx
+        inc hl
+        djnz ml_c
+        ret
+
+; : a b b ... 'TEXT' b ...: bytes from a, and text as ZX81 codes ("'" is
+; no ZX81 character). A text running to the end of the line (no closing
+; "'", trailing spaces left out) offers the next line, ":a '", to go on.
+; After 8 bytes and no text, an M line's characters (a space, then 8):
+; one that is not as the byte at a showed it is stored as its ZX81 code;
+; as it was (reversed or not too), the hex goes. All spaces, none
+; reversed: no text (typed by hand). An M line is drawn again from memory
+; after it. In both, a character reversed on the screen (RVS ON) is
+; stored inverse. A character with no ZX81 code: "?". Read into pat
+; first, so "?" stores nothing; a line holds fewer bytes than pat.
 cmd_colon:
         ld hl,(lptr)
         call needw
         ld (a1),de
-        ld b,8
-co1:    call getb
-        jr c,co_end
-        ld de,(a1)
+        ld de,pat
+        ld bc,0                 ; B: a text seen, C: bytes read
+co1:    call skipsp
+        cp $27
+        jr z,co_str
+        push de
+        call getb
+        pop de
+        jr c,co_put
+        call co_byte
+        ld a,c                  ; 8 bytes, no text: an M line's characters?
+        cp 8
+        jr nz,co1
+        inc b
+        dec b
+        jr nz,co1
+        inc hl
+        ld a,(hl)
+        dec hl
+        cp $27
+        jr z,co1
+        call co_text
+        ld c,8
+        call co_st
+        ld a,(crow)             ; an M line: drawn again from memory, on its
+        push af                 ; row above the cursor, so what was stored
+        dec a                   ; shows (a changed character's inverse too)
+        ld (crow),a
+        ld hl,(a1)
+        call mline
+        pop af
+        ld (crow),a
+        xor a
+        ld (ccol),a
+        jp quietly
+co_put: call co_st
+        jp quietly
+
+co_str: inc hl                  ; 'TEXT: to the next "'" or the line's last
+        push hl                 ; non-space (a2)
+        ld hl,linebuf+40
+cs_ls:  dec hl
+        ld a,(hl)
+        cp ' '
+        jr nz,cs_le             ; (there is the ':' at least)
+        xor a
+        call rvor               ; a reversed space is text
+        jr z,cs_ls
+cs_le:  inc hl
+        ld (a2),hl
+        pop hl
+        ld b,1
+        call atend
+        jr z,co_put             ; "'" alone at the end: nothing more
+cs_ch:  call atend
+        jr z,cs_eol
+        ld a,(hl)
+        inc hl
+        cp $27
+        jr z,co1                ; closed
+        call a2zx
+        jp c,err
+        dec hl
+        call rvor
+        inc hl
+        call co_byte
+        jr cs_ch
+cs_eol: call co_st              ; DE: where the next line goes on
+        ex de,hl
+        call lstart
+        ld a,':'
+        call pch
+        call phex4
+        call putsi
+        db " '",0
+        jp quietly
+
+atend:  push de                 ; Z: HL is at the text's end (a2)
+        ld de,(a2)
+        and a
+        sbc hl,de
+        add hl,de
+        pop de
+        ret
+
+co_byte:
         ld (de),a
         inc de
+        inc c
+        ret
+
+co_st:  ld a,c                  ; pat to a, C bytes; DE after them
+        ld de,(a1)
+        or a
+        ret z
+        ld b,0
+        ld hl,pat
+        ldir
+        ret
+
+co_text:
+        ld a,(hl)               ; HL: after the 8th byte
+        cp ' '
+        ret nz
+        inc hl
+        push hl
+        ld b,8
+ct_sp:  ld a,(hl)
+        cp ' '
+        jr nz,ct_go
+        xor a
+        call rvor
+        jr nz,ct_go
+        inc hl
+        djnz ct_sp
+        pop hl                  ; all spaces
+        ret
+ct_go:  pop hl
+        ld de,(a1)
+        ld ix,pat
+        ld b,8
+ct1:    ld a,(de)               ; as the byte showed: the hex goes
+        call zxch
+        cp (hl)
+        jr nz,ct_new
+        xor a
+        call rvor
+        ld c,a
+        ld a,(de)
+        and $80
+        cp c
+        jr z,ct_same
+ct_new: ld a,(hl)
+        call a2zx
+        jp c,err
+        call rvor
+        ld (ix+0),a
+ct_same:
+        inc hl
+        inc de
+        inc ix
+        djnz ct1
+        ret
+
+; HL: a place in linebuf. A with bit 7 set if that column was reversed
+; on the screen; Z if A is 0 then. Keeps all else.
+rvor:   push hl
+        push bc
+        ld bc,LINERV-linebuf
+        add hl,bc
+        ld c,a
+        ld a,(hl)
+        and $80
+        or c
+        pop bc
+        pop hl
+        ret
+
+; Z n: line 1 a REM of n bytes, the room for code at 16514 ($4082). No
+; line 1: one made before the program, NOPs and a RET last; no program:
+; 10 RAND USR 16514 after it too. Line 1 a REM already: n bytes long now,
+; NOPs added or bytes cut at its end, the rest kept. The program moves
+; under whatever ran, so leaving goes to BASIC, as after L "NAME".
+PROG:    equ $407D              ; the program's first line
+POINTERS: equ $09AD             ; the ROM's: D_FILE to STKEND past HL, + BC
+
+cmd_z:  ld hl,(lptr)
+        call needw
+        ld a,d                  ; 1 to $3FFF
+        cp $40
+        jp nc,err
+        or e
+        jp z,err
         ld (a1),de
-        djnz co1
-co_end: jp quietly
+        ld hl,($400C)           ; D_FILE: no program?
+        ld de,PROG
+        sbc hl,de               ; (carry clear: or)
+        ld bc,6+18              ; line 1 and line 10
+        jr z,zmake
+        ld hl,(PROG)            ; the first line's number, high byte first
+        ld a,l
+        or a
+        jr nz,zins
+        ld a,h
+        cp 1
+        jr z,zrem
+        jp c,err                ; a line 0
+zins:   ld bc,6
+zmake:  push bc
+        ld hl,(a1)
+        add hl,bc
+        ld b,h
+        ld c,l
+        ld hl,PROG
+        call zmove
+        pop bc
+        jp c,err
+        ld hl,$0100             ; line 1
+        ld (PROG),hl
+        ld a,$EA                ; REM
+        ld (PROG+4),a
+        ld hl,(a1)
+        ld de,$4081
+        add hl,de
+        ld (hl),$C9             ; RET, the last byte
+        inc hl
+        ld (hl),$76             ; NEWLINE
+        ld a,c
+        cp 6
+        jr z,zlen
+        inc hl
+        ex de,hl
+        ld hl,zline10
+        ld bc,18
+        ldir
+        jr zlen
+zrem:   ld a,(PROG+4)
+        cp $EA
+        jp nz,err               ; line 1 is no REM
+        ld hl,(a1)              ; its NEWLINE on: moved by n + 2 - its
+        inc hl                  ; length
+        inc hl
+        ld de,(PROG+2)
+        and a
+        sbc hl,de
+        ld b,h
+        ld c,l
+        ld hl,$4080
+        add hl,de
+        call zmove
+        jp c,err
+zlen:   ld hl,(a1)              ; the length: REM, n bytes, NEWLINE
+        inc hl
+        inc hl
+        ld (PROG+2),hl
+        ld de,($400C)           ; NXTLIN at the end: going on stops there,
+        ld ($4029),de           ; report 0
+        ld a,1
+        ld (loaded),a
+        ld de,$407F             ; "REM 4082-" the last byte
+        add hl,de
+        push hl
+        call lstart
+        call putsi
+        db "#REM 4082-",0
+        pop hl
+        call phex4
+        jp down
+
+; HL to STKEND moved on by BC (or back: BC < 0), and the system
+; variables with them; new room NOPs. Carry: no room below the ZX81's
+; SP (STKEND + BC + 36, as the ROM's TEST-ROOM).
+zmove:  ld a,b
+        or c
+        ret z
+        ld (a2),hl
+        ld (a3),bc
+        bit 7,b
+        jr nz,zm1
+        ld hl,($401C)           ; STKEND
+        add hl,bc
+        ld bc,36
+        add hl,bc
+        ld bc,(r_sp)
+        sbc hl,bc
+        ccf
+        ret c
+zm1:    ld hl,(a2)
+        ld bc,(a3)
+        dec hl
+        call POINTERS           ; DE: the old STKEND, BC: it - HL + 1
+        dec bc                  ; the bytes from a2 to STKEND
+        dec bc
+        ld a,(a3+1)
+        rla
+        jr c,zm_dn
+        ex de,hl                ; on: from the last byte down
+        dec hl
+        push hl
+        ld de,(a3)
+        add hl,de
+        ex de,hl
+        pop hl
+        lddr
+        ld hl,(a2)
+        ld bc,(a3)
+zm_nop: ld (hl),0
+        inc hl
+        dec bc
+        ld a,b
+        or c
+        jr nz,zm_nop
+        ret
+zm_dn:  inc hl                  ; back: from the first byte up
+        push hl
+        ld de,(a3)
+        add hl,de
+        ex de,hl
+        pop hl
+        ldir
+        and a
+        ret
+
 
 ; R: the registers, as lines that ";" and "'" take back.
 cmd_r:  call r_main
         call lstart
         call putsi
-        db " AF'  BC'  DE'  HL'  I  IF",0
+        db "#AF'  BC'  DE'  HL'  I  IF",0
         call down
         call lstart
         ld a,$27
@@ -906,7 +1507,7 @@ cmd_r:  call r_main
 
 r_main: call lstart             ; the main registers' two lines
         call putsi
-        db " PC   AF   BC   DE   HL   SP   IX   IY",0
+        db "#PC   AF   BC   DE   HL   SP   IX   IY",0
         call down
         call lstart
         ld a,';'
@@ -1164,17 +1765,18 @@ help:   db "M S [E]     MEMORY, 8 BYTES A LINE",0
         db "S           ONE STEP (RETURN: ANOTHER)",0
         db "A A TEXT    ASSEMBLE ($ OR 0 BEFORE HEX)",0
         db "$           THE DIRECTORY",0
-        db "L ",$22,"NAME",$22," [A] LOAD (AT A)",0
-        db "W ",$22,"NAME",$22," S E WRITE S-E TO THE DISK",0
+        db "L ",$22,"NAME",$22," [A] LOAD; A FILE TO A",0
+        db "W ",$22,"NAME",$22," [S E] SAVE; S-E TO A FILE",0
         db "@[TEXT]     THE DRIVE'S STATUS, A COMMAND",0
-        db ": A B ...   STORE BYTES",0
+        db ": A B 'TXT' STORE BYTES, ZX81 TEXT",0
         db "R           REGISTERS (; AND ' TO EDIT)",0
         db "G [A]       GO ON (AT A); X THE SAME",0
         db "F S E B     FILL",0
         db "T S E D     TRANSFER",0
         db "C S E D     COMPARE",0
         db "H S E B ... HUNT BYTES; H S E 'TEXT",0
-        db "F5          BACK TO THE ZX81",0
+        db "= N         HEX, +DEC, %BIN: ALL THREE",0
+        db "Z N         LINE 1: A REM OF N BYTES",0
         db 0
 
 ; ---------------------------------------------------------------- parsing
@@ -1264,9 +1866,17 @@ zx2asc:                         ; ZX81 codes 0-63 as ASCII ($7F: graphics)
         include "version.inc"   ; verstr: zx64's version (build.py)
 
 inited:  db 0                   ; the screen has been cleared once
+loaded:  db 0                   ; L "NAME" brought a program: leave to BASIC
+msp:     dw 0                   ; the monitor's SP while L uses the ZX81's
+sc_ty:   db 0                   ; scrolling: ':' or ',', the line's kind
+bk_to:   dw 0                   ; dback: the line, a start tried, bytes
+bk_at:   dw 0                   ; left, dbnext there
+bk_n:    db 0
+bk_db:   db 0
 crow:    db 0                   ; the cursor
 ccol:    db 0
 curst:   db 0                   ; the cursor's character is reversed
+rvs:     db 0                   ; RVS ON: $80
 blinkc:  db 0
 klast:   db $FF                 ; the key last taken (column * 8 + row)
 krep:    db 0                   ; frames it has been held
@@ -1319,22 +1929,11 @@ r_de2:   dw 0
 r_hl2:   dw 0
 r_i:     db 0
 r_iff:   db 0
-kmat:    ds 8
-kprev:   ds 8
-pat:     ds 32
-linebuf: ds 41
-dtext:   ds 24
-klist:   ds 8                   ; the numbers' kinds and places (see koff)
 aaddr:   dw 0                   ; A: where, the text, the encoding tried,
 atext:   dw 0                   ; its length, the pattern
 alen:    db 0
 apat:    dw 0
-cbuf:    ds 4
-nvc:     db 0                   ; the text's numbers, how many and their values
-nval:    ds 8
-cvals:   ds 8
-ninp:    ds 40                  ; the text, and a candidate's, normalized
-ncand:   ds 24
+nvc:     db 0                   ; the text's numbers, how many (nval)
 kptr:    dw klist
 part1end:
 
@@ -1387,8 +1986,58 @@ cd_e:   ld hl,(a2)              ; e - the next: carry when past e
         ret c
         jr cd_line
 
-; HL: an instruction, shown as one line; HL: the next one.
-dis1:   ld (daddr),hl
+; DE: a D line's address -> HL: the instruction before it, and dbnext
+; for showing it. Z80 instructions are 1-4 bytes, so: decoded from 16
+; bytes back, then 15 ..., the first run that lands on DE exactly gives
+; it (code falls into step within a few instructions; data may fool it).
+; None does: DE-1.
+dback:  ld (bk_to),de
+        ld b,16
+db1:    push bc
+        ld hl,(bk_to)
+        ld a,l
+        sub b
+        ld l,a
+        jr nc,db2
+        dec h
+db2:    ld a,b                  ; bytes left to DE
+        ld (bk_n),a
+        xor a
+        ld (dbnext),a
+db3:    ld (bk_at),hl
+        ld a,(dbnext)
+        ld (bk_db),a
+        call ddec               ; HL: the next instruction
+        push hl
+        ld de,(bk_at)
+        and a
+        sbc hl,de               ; L: its length
+        ld a,(bk_n)
+        sub l
+        pop hl
+        jr c,db_no              ; past DE
+        ld (bk_n),a
+        jr nz,db3
+        pop bc                  ; on DE
+        ld hl,(bk_at)
+        ld a,(bk_db)
+        ld (dbnext),a
+        ret
+db_no:  pop bc
+        djnz db1
+        ld hl,(bk_to)
+        dec hl
+        xor a
+        ld (dbnext),a
+        ret
+
+; HL: an instruction, shown as one line; HL: the next one. ddec only
+; decodes it (daddr, dptr, dtext), dshow shows it on the cursor's row.
+dis1:   call ddec
+        call dshow
+        jp down                 ; (keeps HL)
+
+ddec:   ld (daddr),hl
         ld (dptr),hl
         ld hl,dtext
         ld (dout),hl
@@ -1410,22 +2059,24 @@ dis1:   ld (daddr),hl
         call tch
         call fetch
         call tn
-        jr d1_line
+        jr d1_ret
 d1_op:  call dec1
         ld hl,(daddr)
         ld a,(hl)
         cp $CF                  ; RST $08, one byte: a report follows
-        jr nz,d1_line
+        jr nz,d1_ret
         ld hl,(dptr)
         ld de,(daddr)
         and a
         sbc hl,de
         dec l
-        jr nz,d1_line
+        jr nz,d1_ret
         inc a
         ld (dbnext),a
-d1_line:
-        call lstart
+d1_ret: ld hl,(dptr)
+        ret
+
+dshow:  call lstart
         call putsi
         db ".,",0
         ld hl,(daddr)
@@ -1454,7 +2105,6 @@ dl2:    call putsi
         djnz dl2
 dl3:    ld hl,dtext
         call puts
-        call down
         ld hl,(dptr)
         ret
 
@@ -2010,7 +2660,7 @@ b_off:  ld a,(ubn)              ; DE: the one to go; the last one there
         ld (de),a
 b_list: call lstart
         call putsi
-        db "BREAKPOINTS",0
+        db "#BREAKPOINTS",0
         ld a,(ubn)
         or a
         jr z,bl_end
@@ -2190,7 +2840,7 @@ bpshow: ld a,(mmode)
         jr z,bs_step
         call lstart
         call putsi
-        db "BREAKPOINT",0
+        db "#BREAKPOINT",0
         call down
         call cmd_r
         jr bs_d
@@ -2357,8 +3007,10 @@ sa2:    ld a,(sbn)
 
 ; ---------------------------------------------------------------- A
 ; A a text: the instruction assembled at a; its line becomes D's, and
-; ".A next " waits for the next (nothing more: the end). A D line
-; (".,") changed and RETURN: the same, in place. Numbers in hex, with
+; ".A next " waits for the next (nothing more: the end; A a alone offers
+; ".A a "). A D line (".,") changed and RETURN: the same, in place; if
+; the instruction's length changed, ".A next " too, since the line
+; after it no longer is the next instruction. Numbers in hex, with
 ; "$" or a leading digit ($FF, 0FF: DE or C could be registers).
 ; Assembling is searching: every encoding is disassembled, with zeros
 ; for its numbers, until one reads as the text does (both normalized,
@@ -2367,10 +3019,10 @@ sa2:    ld a,(sbn)
 ; shows. With IX or IY in the text only those encodings are tried.
 cmd_a:  ld hl,(lptr)
         call needw
-        ld (aaddr),de
         call skipsp
         or a
-        ret z                   ; no instruction: the end
+        jr z,a_none
+        ld (aaddr),de
         ld (atext),hl
         call asm1
         jr c,a_err
@@ -2383,10 +3035,13 @@ a_next: call lstart             ; the next one's prompt
         call phex4
         call sp1
         jp quietly
-a_err:  call lstart
-        ld a,'?'
-        call pch
-        call down
+a_none: ld hl,(aaddr)            ; no instruction: on the line offered (a
+        sbc hl,de               ; at aaddr), the end; else it is offered
+        ld (aaddr),hl           ; (0: nothing offered now)
+        ret z
+        ld (dnext),de
+        jr a_next
+a_err:  call qline
         ld hl,(aaddr)           ; the same address again
         ld (dnext),hl
         jr a_next
@@ -2404,10 +3059,21 @@ cm_typed:
         or a
         jp z,quietly
         ld (atext),hl
+        ld hl,linebuf
+        call dcount
+        push bc                 ; B: its bytes before
         call asm1
         jp c,err
         call a_show
-        jp quietly
+        pop bc
+        ld hl,(dnext)
+        ld de,(aaddr)
+        and a
+        sbc hl,de
+        ld a,l
+        cp b
+        jp z,quietly            ; as long as before: the next line still is
+        jr a_next
 
 a_show: ld hl,crow              ; the line typed (above the cursor) as D's
         dec (hl)
@@ -2765,12 +3431,15 @@ hs1:    ld a,(hl)
         jr hs1
 
 ; ---------------------------------------------------------------- the disk
-; $ the directory; L "NAME" [a] a file to its own address or to a; W
-; "NAME" s e memory to a file (a PRG: its load address is the C64's, so
-; LOAD "NAME",8,1 on a C64 puts it back); @ the drive's status, @text a
-; DOS command (@S:NAME scratches). The 6510 does it (c64/boot.asm,
-; commands 3-8), as for LOAD and SAVE; it won't load into its own page
-; or the I/O chips, nor W save from the I/O chips.
+; $ the directory; L "NAME" a program, as LOAD; L "NAME" a a file to a;
+; W "NAME" the program, as SAVE; W "NAME" s e memory to a file (a PRG:
+; its load address is the C64's, so LOAD "NAME",8,1 on a C64 puts it
+; back); @ the drive's status, @text a DOS command (@S:NAME scratches).
+; The 6510 does it (c64/boot.asm, commands 1-8), as for LOAD and SAVE; it
+; won't load into its own page or the I/O chips, nor W save from the I/O
+; chips.
+CMD_LOAD:  equ 1
+CMD_SAVE:  equ 2
 CMD_PRG:   equ 3
 CMD_DIR:   equ 4
 CMD_DIRL:  equ 5
@@ -2809,13 +3478,12 @@ cmd_l:  ld hl,(lptr)
         call getname
         jp c,err
         call getw
-        ld a,0
-        jr c,cl1
+        jr c,l_prog
         ld hl,$1000             ; to a: as the C64 has it
         add hl,de
         ld (MBOX+$22),hl
         ld a,1
-cl1:    ld (MBOX+$26),a
+        ld (MBOX+$26),a
         ld a,CMD_PRG
         call dcall
         push af
@@ -2825,7 +3493,7 @@ cl1:    ld (MBOX+$26),a
         jp nz,derr
         call lstart
         call putsi
-        db "LOADED ",0
+        db "#LOADED ",0
         ld hl,(MBOX+$22)
         ld de,-$1000
         add hl,de
@@ -2838,11 +3506,46 @@ cl1:    ld (MBOX+$26),a
         call phex4
         jp down
 
+; L "NAME": the 6510's LOAD, from the ZX81's own stack (r_sp), so the
+; program has to fit below it as for LOAD. Leaving then goes to BASIC,
+; as a report (leave_q): what was running is gone.
+l_prog: ld (msp),sp
+        ld sp,(r_sp)
+        ld a,CMD_LOAD
+        call dcall
+        ld sp,(msp)
+        jr z,lp_ok
+        cp 2
+        jr z,lp_big
+        cp 3
+        jp nz,derr
+        call lstart
+        call putsi
+        db "#? NOT A PROGRAM",0
+        jp down
+lp_big: call lstart
+        call putsi
+        db "#? TOO BIG",0
+        jp down
+lp_ok:  ld a,1
+        ld (loaded),a
+        call lstart
+        call putsi
+        db "#LOADED 4009-",0
+        ld hl,($4014)           ; E_LINE
+        dec hl
+        call phex4
+        jp down
+
 cmd_w:  ld hl,(lptr)
         call getname
         jp c,err
-        call needw
-        ld (a1),de
+        call getw
+        jr nc,cw0
+        ld a,CMD_SAVE           ; W "NAME": the program, as SAVE
+        call dcall
+        jr dstat0
+cw0:    ld (a1),de
         call needw
         ld (a2),de
         ld hl,(a2)
@@ -2894,10 +3597,8 @@ at3:    ld a,b
         ld (MBOX+2),a
         jr dstat
 
-derr:   call lstart             ; something went wrong: "?", and what the
-        ld a,'?'                ; drive says
-        call pch
-        call down
+derr:   call qline              ; something went wrong: "#?", and what the
+                                ; drive says
 dstat0: xor a                   ; no command: just the status
         ld (MBOX+2),a
 dstat:  ld a,CMD_DCMD           ; the drive's status line
@@ -2997,6 +3698,80 @@ pp1:    and $7F
         jr c,ppet
         call pch
         jr ppet
+
+; ---------------------------------------------------------------- =
+; = n: n in hex ($ or nothing before it), decimal (+) or binary (%),
+; shown in all three: "= $C000 +49152 %11000000 00000000", 8 bits up to
+; 255. RETURN on that line shows it again (what follows a number is left
+; alone if a space comes first). Past $FFFF, or not a number: "?".
+cmd_eq: ld hl,(lptr)
+        call skipsp
+        ld c,10
+        cp '+'
+        jr z,eq_pfx
+        ld c,2
+        cp '%'
+        jr z,eq_pfx
+        ld c,16
+        cp '$'
+        jr nz,eq_num
+eq_pfx: inc hl
+eq_num: ld de,0
+        ld a,(hl)
+        call hexval
+        jp c,err                ; no digit at all
+eq_dig: cp c
+        jp nc,err               ; not one in this base
+        push hl
+        ld h,0
+        ld l,a
+        ld b,c
+eq_mul: add hl,de               ; the digit + DE * the base
+        jp c,err
+        djnz eq_mul
+        ex de,hl
+        pop hl
+        inc hl
+        ld a,(hl)
+        call hexval
+        jr nc,eq_dig
+        ld a,(hl)               ; the number ends with the line or a space
+        or a
+        jr z,eq_out
+        cp ' '
+        jp nz,err
+eq_out: ex de,hl
+        call lstart
+        call putsi
+        db "= $",0
+        call phex4
+        call putsi
+        db " +",0
+        push hl
+        call pdec
+        pop hl
+        call putsi
+        db " %",0
+        ld a,h
+        or a
+        jr z,eq_lo
+        call pbin
+        call sp1
+eq_lo:  ld a,l
+        call pbin
+        jp down
+
+pbin:   ld c,a                  ; A in binary, 8 digits
+        ld b,8
+pb1:    ld a,'0'
+        rl c
+        adc a,0
+        call pch
+        djnz pb1
+        ret
+
+zline10: db $00,$0A,$0E,$00,$F9,$D4  ; Z's 10 RAND USR 16514 (part 1 is full)
+        db $1D,$22,$21,$1D,$20,$7E,$8F,$01,$04,$00,$00,$76
 
 monend:
 

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """ZX81 BASIC text -> a .p file, as the ROM's SAVE would write it.
 
-    tools/zxbasic.py prog.bas out.p [build/zx64.lbl]
+    tools/zxbasic.py prog.bas out.p [build/obj/zx64.lbl]
 
 One BASIC line per text line, keywords spelled out as the ZX81 lists
 them (PRINT, PEEK, INKEY$, <>, **). Spaces outside strings are ignored.

@@ -1,4 +1,5 @@
-; zx64 - 6510 side: the boot file. LOAD "ZX81",8 and RUN.
+; zx64 - 6510 side: ZX64, which the boot file ZX81 (c64/stub.asm) loads
+; and starts (LOAD "ZX81",8 and RUN).
 ;
 ; Sets up the VIC for the ZX81 picture, then hands the bus to the Z80,
 ; which starts the ZX81 ROM. From then on the 6510 only wakes up when the
@@ -7,7 +8,8 @@
 ; kernal and hands the bus back again.
 ;
 ; tools/build.py puts this at $0801 and the patched ROM and the Z80 code
-; behind it, so the Z80 image lands at $1000-$3xxx.
+; behind it, so the Z80 image lands at $1000-$3xxx, and the JiffyDOS reader
+; (c64/jcore.asm) at $3E00, which start puts in place.
 
 !cpu 6510
 
@@ -18,6 +20,8 @@ CHARSRC = ZXROM+$1e00   ; the ZX81 font in the ROM
 DFZ80   = $5009         ; Z80 $4009, where a .P file goes
 ELINE   = $5014         ; Z80 $4014, E_LINE: a .P file ends there
 PTR     = $fb
+        !source "jcore.sym"     ; the JiffyDOS reader's labels (c64/jcore.asm)
+st      = JST                   ; ST as a read left it: the kernal's or jget's
 
 CMD_LOAD = 1
 CMD_SAVE = 2
@@ -27,10 +31,11 @@ CMD_DIRL = 5            ; its next line (to MB+$80),
 CMD_DIRC = 6            ; close it early
 CMD_WRITE = 7           ; the monitor's W: memory to a PRG file
 CMD_DCMD = 8            ; the monitor's @: a DOS command, the drive's status to MB+$80
-CMD_ROM  = 9            ; F7 or F3: the ZX81 ROM again, from the boot file
+CMD_ROM  = 9            ; F7 or F8: the ZX81 ROM again, from ZX64
 ST_OK    = 0
 ST_ERR   = 1            ; not found, or the drive reported an error
 ST_BIG   = 2            ; the program would run into the Z80's stack
+ST_NOTP  = 3            ; the file isn't a ZX81 program
 
 SETNAM  = $ffbd
 SETLFS  = $ffba
@@ -41,7 +46,6 @@ CHKOUT  = $ffc9
 CLRCHN  = $ffcc
 CHRIN   = $ffcf
 CHROUT  = $ffd2
-READST  = $ffb7
 CINT    = $ff81
 IOINIT  = $ff84
 RESTOR  = $ff8a
@@ -66,23 +70,7 @@ start:  sei
         lda $dc0d
         lda $dd0d
 
-        ldx #0                  ; charset at $E800 (RAM under the kernal,
-cs:     lda CHARSRC,x           ; which the VIC sees): 0-63 the ZX81 font,
-        sta $e800,x             ; 128-191 inverse, 64-127 blank, 192-255
-        eor #$ff                ; solid
-        sta $ec00,x
-        lda CHARSRC+$100,x
-        sta $e900,x
-        eor #$ff
-        sta $ed00,x
-        lda #0
-        sta $ea00,x
-        sta $eb00,x
-        lda #$ff
-        sta $ee00,x
-        sta $ef00,x
-        inx
-        bne cs
+        jsr chars
 
         lda #0                  ; ZX81 space is 0; colour RAM black
 cl:     sta $e000,x
@@ -105,6 +93,7 @@ cl:     sta $e000,x
         lda $dd00
         and #$fc
         sta $dd00
+        jsr jinst               ; the JiffyDOS reader into place (c64/jcore.asm)
         lda #$8a                ; screen $E000, chars $E800: $C000-$CFFF
         sta $d018               ; is left for the ZX81's 32K
         lda #$17                ; 24 rows, yscroll 7: rows 0-23 exactly fill
@@ -186,13 +175,13 @@ hloop:  sta hdr,x
         lda st
         and #$c3                ; ended, or a read error, already
         bne rerr
-        jsr CHRIN
-        pha
-        jsr READST
-        sta st
-        pla
+        stx PTR                 ; (jget changes X)
+        jsr jbyte
+        ldx PTR
         jmp hloop
-hdone:  lda hdr+11              ; E_LINE: does the program fit? Checked
+hdone:  jsr isprog              ; a ZX81 program at all? (a PRG of code
+        bcs rnotp               ; isn't)
+        lda hdr+11              ; E_LINE: does the program fit? Checked
         ldx hdr+12              ; before anything is written, so a refused
         jsr setend              ; load leaves the ZX81 as it was
         bcs rbig
@@ -214,11 +203,7 @@ rloop:  lda PTR                 ; at E_LINE: done, whatever follows
         lda st
         and #$c3                ; the file ended before E_LINE, or an error
         bne rerr
-        jsr CHRIN
-        pha
-        jsr READST
-        sta st
-        pla
+        jsr jbyte
         ldy #0
         sta (PTR),y
         jsr pstep
@@ -231,9 +216,11 @@ rok:    lda #ST_OK
         beq rend
 rbig:   lda #ST_BIG
         bne rend
+rnotp:  lda #ST_NOTP
+        bne rend
 rerr:   lda #ST_ERR
 rend:   sta MB+1
-        jsr CLRCHN
+        jsr jclr
         lda #2
         jsr CLOSE
         jmp done
@@ -279,23 +266,36 @@ tryopen:
         jsr SETLFS
         jsr OPEN
         bcs tofail
+        lda dev                 ; JiffyDOS, if the drive speaks it
+        ldx #$60                ; (SA 0)
+        jsr jtalk
+        lda JFLAG
+        bne +
+        jsr jend                ; else the kernal's way
         ldx #2
         jsr CHKIN
         bcs tofail
-        jsr CHRIN
++       jsr jbyte
         sta first
-        jsr READST
-        sta st
+        lda st
         and #$83
         bne tofail
         clc
         rts
 tofail:
-        jsr CLRCHN
+        jsr jclr
         lda #2
         jsr CLOSE
         sec
         rts
+
+; CLRCHN, and before it the end of a JiffyDOS read (the kernal's CLRCHN
+; only knows about its own CHKIN).
+jclr:   lda JFLAG
+        beq +
+        lsr JFLAG
+        jsr jend
++       jmp CLRCHN
 
 ; ------------------------------------------------------------ SAVE
 ; Write $4009 up to E_LINE as "@0:NAME" (replacing an old one), then ask
@@ -371,6 +371,29 @@ dbad:   jsr CLRCHN
         rts
 
 nmi:    rti
+
+; The charset at $E800 (RAM under the kernal, which the VIC sees), from
+; the ROM's font: 0-63 the ZX81 font, 128-191 inverse, 64-127 blank,
+; 192-255 solid. At the start, and again with the ROM (rcopy): a program
+; that writes over the ROM may have written over this too. Leaves X = 0.
+chars:  ldx #0
+cs:     lda CHARSRC,x
+        sta $e800,x
+        eor #$ff
+        sta $ec00,x
+        lda CHARSRC+$100,x
+        sta $e900,x
+        eor #$ff
+        sta $ed00,x
+        lda #0
+        sta $ea00,x
+        sta $eb00,x
+        lda #$ff
+        sta $ee00,x
+        sta $ef00,x
+        inx
+        bne cs
+        rts
 
 ; LOAD and SAVE show how far they are on the top row of the ZX81's
 ; picture, which the Z80 has set up: " LOADING NAME", an empty bar of 8
@@ -453,7 +476,6 @@ spglyph:                        ; zedwire's, inverse: a quarter, half, three
 pw:     !text ",P,W"
 dev:    !byte 8
 first:  !byte 0
-st:     !byte 0
 eend:   !word 0
 sph:    !byte 0
 hdr:    !fill 13,0
@@ -508,15 +530,27 @@ more:   sec
 +       jmp loop
 mtab:   !word doprg-1, dodir-1, dodirl-1, dodirc-1, dowrite-1, docmd-1, dorom-1
 
-; The ZX81 ROM again, when a program has written over it (F7 or F3): the boot
-; file named in the mailbox, its bytes for C64 $1000-$2FFF, skipping the
-; load address and the loader before them. The bar across all of it.
+; The ZX81 ROM again, when a program has written over it (F7 or F8): ZX64
+; (the file named in the mailbox), its bytes for Z80 $0000-$1FFF, skipping the
+; load address and the loader before them. The bar across all of it. Read
+; into the ZX81's RAM first (the reset clears it anyway), clear of the
+; Z80's stack, and copied into place only if its sum is this build's
+; (ROMSUM, as romsum_v): a boot file from another build would jump into
+; zx64 at the wrong places. If not: why, on the top row (rmsg), ST_ERR.
 dorom:  lda #$36
         sta $01
-        jsr tryopen             ; (it reads the load address's first byte)
-        bcc +
-        jmp notfound
-+       lda #<$2800             ; $0800 to skip, $2000 to keep
+        jsr rchk                ; zx64's own copy of the sum changed: zx64
+        beq +                   ; itself was written over, which no ROM
+        ldx #rm_z64t-rmsgs      ; from the disk puts right
+rm_st:  jsr rmsg
+        lda #ST_ERR
+        sta MB+1
+        jmp done
++       jsr tryopen             ; (it reads the load address's first byte)
+        ldx #rm_none-rmsgs
+        bcs rm_st
+        jsr rpick
+        lda #<$2800             ; $0800 to skip, $2000 to keep
         sta tot
         lda #>$2800
         sta tot+1
@@ -525,7 +559,7 @@ dorom:  lda #$36
         sta PTR
         lda #>$0800
         sta PTR+1
-rskip:  jsr CHRIN
+rskip:  jsr jbyte
         jsr pstep
         lda PTR
         bne +
@@ -534,23 +568,28 @@ rskip:  jsr CHRIN
         lda PTR
         ora PTR+1
         bne rskip
-        lda #$10                ; PTR = $1000 (its low byte is 0)
+        lda rbuf                ; PTR = the buffer (its low byte is 0)
         sta PTR+1
-rrom:   jsr CHRIN
+rrom:   jsr jbyte
         ldy #0
         sta (PTR),y
         jsr pstep
         inc PTR
         bne rrom
-        inc PTR+1
-        lda PTR+1
-        cmp #$30
+        jsr rend8k
         bne rrom
-        jsr READST
+        lda st
         and #$83                ; a time-out or no device: it may be wrong
         beq +
-        jmp rerr
-+       jmp rok
+        ldx #rm_err-rmsgs
+        bne rm_bad
++       jsr rsum
+        beq +
+        ldx #rm_other-rmsgs
+rm_bad: jsr rmsg
+        jmp rerr                ; (closes the file)
++       jsr rcopy
+        jmp rok
 
 ; A PRG file, the name in the mailbox, to the C64 address its first two
 ; bytes give (the monitor itself: zx64mon to $4000, zx64mon2 to $F000),
@@ -563,10 +602,8 @@ doprg:  lda #$36
         jmp notfound
 +       lda first
         sta PTR
-        jsr CHRIN
+        jsr jbyte
         sta PTR+1
-        jsr READST
-        sta st
         lda MB+$26
         beq +
         lda MB+$22
@@ -591,10 +628,8 @@ doprg:  lda #$36
 ploop:  lda st
         and #$c3                ; ended, or an error
         bne pend
-        jsr CHRIN
+        jsr jbyte
         pha
-        jsr READST
-        sta st
         lda PTR+1
         cmp #$10
         bcc pbad
@@ -679,6 +714,29 @@ dowrite:
         sta eend+1
         jmp sloop               ; as SAVE: the bytes, then the drive's word
 
+; C=1 if hdr (the file's first 13 bytes, $4009-$4015) isn't the start of
+; a ZX81 program: VERSN 0, D_FILE from $407D (past the system variables),
+; VARS not before it, E_LINE after VARS. Every .P passes; code doesn't.
+isprog: lda hdr                 ; VERSN
+        bne ip_no
+        lda hdr+3               ; D_FILE >= $407D
+        cmp #$7d
+        lda hdr+4
+        sbc #$40
+        bcc ip_no
+        lda hdr+7               ; VARS >= D_FILE
+        cmp hdr+3
+        lda hdr+8
+        sbc hdr+4
+        bcc ip_no
+        lda hdr+7               ; VARS < E_LINE: C=0
+        cmp hdr+11
+        lda hdr+8
+        sbc hdr+12
+        rts
+ip_no:  sec
+        rts
+
 !if * > $0dfe { !error "6510 code overflows into $0DFE, where the Z80 puts a keyboard row (IN A,($FE), A = $FD)" }
 
 *= $0e00
@@ -690,8 +748,8 @@ dodir:  lda #$36
         jsr tryopen
         bcc +
         jmp notfound
-+       jsr CHRIN               ; the load address' high byte
-        jsr CLRCHN
++       jsr jbyte               ; the load address' high byte
+        jsr jclr                ; (then the kernal's: a TALK a line)
         lda #ST_OK
         sta MB+1
         jmp done
@@ -700,17 +758,17 @@ dodirl: lda #$36
         ldx #2
         jsr CHKIN
         bcs dlend
-        jsr rdb                 ; the link: 0 0 at the end
+        jsr jbyte                 ; the link: 0 0 at the end
         sta first
-        jsr rdb
+        jsr jbyte
         ora first
         beq dlend
-        jsr rdb
+        jsr jbyte
         sta MB+$80
-        jsr rdb
+        jsr jbyte
         sta MB+$81
         ldy #2
--       jsr rdb
+-       jsr jbyte
         beq +
         sta MB+$80,y
         iny
@@ -730,12 +788,75 @@ dodirc: lda #2
         sta MB+1
         jmp done
 
-rdb:    jsr CHRIN               ; a byte, ST kept in st; flags as A
-        pha
-        jsr READST
-        sta st
-        pla
+
+; dorom's: inc PTR+1; Z once PTR has gone past the buffer's 8K.
+rend8k: inc PTR+1
+        lda PTR+1
+        sec
+        sbc rbuf
+        cmp #$20
         rts
+
+; Z if the buffer's bytes from 5 on add up to ROMSUM (as romsum in
+; z80/zx64.asm: $0000-$0004 are the calculator's).
+rsum:   lda #5
+        sta PTR
+        lda rbuf
+        sta PTR+1
+        lda #0
+        sta acc
+        sta acc+1
+        tay
+-       lda (PTR),y
+        clc
+        adc acc
+        sta acc
+        bcc +
+        inc acc+1
++       inc PTR
+        bne -
+        jsr rend8k
+        bne -
+rs_cmp: lda acc
+        cmp #<ROMSUM
+        bne +
+        lda acc+1
+        cmp #>ROMSUM
++       rts
+
+; Z if romsum_v, zx64's copy of the sum, is still this build's.
+rchk:   lda ROMSUMV
+        sta acc
+        lda ROMSUMV+1
+        sta acc+1
+        jmp rs_cmp
+
+; The buffer for dorom: Z80 $4000, or $6000 if the Z80's stack is in
+; that 8K (its SP as it handed over, and the bytes above it).
+rpick:  ldx #$50
+        lda SPZ80+1
+        cmp #$3f
+        bcc +
+        cmp #$60
+        bcs +
+        ldx #$70
++       stx rbuf
+        rts
+
+; X: a message (rmsgs): MSGBUF as the top row, the text from column 1.
+rmsg:   ldy #31
+        lda #$80                ; inverse spaces
+-       sta MSGBUF,y
+        dey
+        bpl -
+        iny
+-       lda rmsgs,x
+        beq +
+        sta MSGBUF+1,y
+        inx
+        iny
+        bne -
++       rts
 
 !if * > $0efe { !error "6510 code overflows into $0EFE, where the Z80 puts a keyboard row (IN A,($FE), A = $FE)" }
 
@@ -759,7 +880,7 @@ docmd:  lda #$36
         jsr CHKIN
         bcs dcbad
         ldy #0
--       jsr rdb
+-       jsr jbyte
         cmp #13
         beq +
         sta MB+$80,y
@@ -783,5 +904,29 @@ dcbad:  jsr CLRCHN
         lda #ST_ERR
         sta MB+1
         jmp done
+
+        !source "romsg.a"       ; rmsgs, dorom's messages (tools/build.py)
+rbuf:   !byte 0                 ; dorom's buffer, its high byte (C64)
+
+; dorom's: the buffer's 8K to the ROM's place, and the charset from it.
+DST     = $fd
+rcopy:  lda #0
+        sta PTR
+        sta DST
+        tay
+        lda rbuf
+        sta PTR+1
+        lda #>ZXROM
+        sta DST+1
+        ldx #$20
+-       lda (PTR),y
+        sta (DST),y
+        iny
+        bne -
+        inc PTR+1
+        inc DST+1
+        dex
+        bne -
+        jmp chars
 
 !if * > $1000 { !error "6510 code overflows into the Z80 image at $1000" }

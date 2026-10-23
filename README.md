@@ -32,16 +32,21 @@ On the C64: `LOAD "ZX81",8`, `RUN`. Then `LOAD "MAZOGS"`, as from tape.
 
 - The ZX81 in SLOW mode at about twice a real one's speed, 16K, 32K or
   1K, the picture through the VIC's raster interrupt.
+- A fast loader where the drive supports it (JiffyDOS, as on an
+  SD2IEC): about 7 times the kernal's speed.
 - `LOAD` and `SAVE` from disk, with a progress bar.
 - Type-ahead and the ZX81's layout on the C64 keyboard
-  ([overlay](docs/img/keyboard.png), [to print](docs/keyboard.pdf)); F2 colour schemes; F7 reset, which
-  repairs the ROM if a program wrote over it.
-- zx64mon on F5: memory, disassembler, assembler, breakpoints, single
-  step, disk and DOS commands, in any running program.
+  ([overlay](docs/img/keyboard.png), [to print](docs/keyboard.pdf));
+  six colour schemes.
+- A joystick in port 2 as ZX81 keys: 5678+0, or a game's own keys,
+  taught on the spot.
+- zx64mon, a machine code monitor: memory, disassembler, assembler,
+  breakpoints, single step, disk and DOS commands, in any running
+  program.
 - `tools/pcheck.py`: warns about games that won't work, as they go on
   the disk.
 - `make test`: both CPUs in emulators, with the real hardware's quirks
-  modelled; 92 checks.
+  modelled; 169 checks.
 
 Not possible: hi-res, WRX and other display tricks.
 

@@ -122,10 +122,10 @@ def shot(m, name):
 def machine():
     m = Shot(int_wired=True)
     m.ram[0x02A6] = 1                                     # the kernal's PAL flag
-    for f in glob.glob(os.path.join(ROOT, "build", "*.p")) + glob.glob(os.path.join(ROOT, "games", "*.p")):
+    for f in glob.glob(os.path.join(ROOT, "build", "obj", "*.p")) + glob.glob(os.path.join(ROOT, "games", "*.p")):
         m.drive.files[os.path.basename(f)[:-2].upper().encode()] = open(f, "rb").read()
     for f in ("zx64mon", "zx64mon2", "zx81"):
-        m.drive.files[f.upper().encode()] = open(os.path.join(ROOT, "build", f + ".prg"), "rb").read()
+        m.drive.files[f.upper().encode()] = open(os.path.join(ROOT, "build", "obj", f + ".prg"), "rb").read()
     return m
 
 
@@ -203,12 +203,15 @@ def sc_games():
 
 def sc_monitor():
     """The monitor: F5 in Mazogs; the ROM's start and its patched INT."""
-    m = machine()
-    m.boot()
-    load(m, "MAZOGS", 300)
-    m.tap("F5")
-    m.run(60)
-    pc = m.mscreen()[2][1:5]
+    for wait in range(300, 340, 3):                      # F5 when it stops the game in its
+        m = machine()                                    # own code, not in the ROM's
+        m.boot()
+        load(m, "MAZOGS", wait)
+        m.tap("F5")
+        m.run(60)
+        pc = m.mscreen()[2][1:5]
+        if int(pc, 16) >= 0x4000:
+            break
     mon(m, f"D {pc}")
     shot(m, "mon-mazogs")
     mon(m, "D 0000 0008", "D 0038 003A", "D 0277 027D")
@@ -216,18 +219,19 @@ def sc_monitor():
 
 
 def sc_asm():
-    """1 REM with room for code; A assembles; RUN; M and PEEK."""
+    """Z 17 makes the REM; A assembles, : the text (WORLD with RVS ON); LIST; RUN; M."""
     m = machine()
     m.boot()
-    m.type("1 E " + " ".join("012345678901234567890123") + " NEWLINE")
-    m.type("1 0 P SHIFT+NEWLINE L 1 6 5 1 4 NEWLINE")              # 10 PRINT USR 16514
-    m.type("2 0 P SHIFT+NEWLINE O 1 6 5 3 4 SHIFT+K 2 5 6 SHIFT+B "
-           "SHIFT+NEWLINE O 1 6 5 3 5 NEWLINE")                      # 20 PRINT PEEK ...
     m.run(5)
     m.tap("F5")
     m.run(60)
-    mon(m, "A 4082 LD HL,$0000", "LD B,$64", "LD E,B", "LD D,$00", "ADD HL,DE", "DJNZ $4087",
-        "LD ($4096),HL", "LD B,H", "LD C,L", "RET", "")
+    mon(m, "Z 17", "A 4082 LD HL,$408D", "LD A,(HL)", "INC A", "RET Z", "DEC A", "RST $10", "INC HL",
+        "JR $4085", "")
+    m.mtype(":408D 'HELLO ")
+    m.mkey("CTRL", "9")
+    m.mtype("WORLD")
+    m.mkey("CTRL", "0")
+    m.mtype("' FF\r", settle=60)
     shot(m, "asm")
     mon(m, "X")
     m.run(30)
