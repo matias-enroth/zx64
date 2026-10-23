@@ -53,12 +53,11 @@ freezes where it is until it gets the machine back.
   <img src="img/turns-flow.svg" width="100%" alt="A timeline: the 6510 boots and sets up the VIC, then hands over with $DE00; the Z80 starts the ZX81, you type LOAD MAZOGS; the 6510 loads it from disk; the Z80 runs Mazogs while the 6510 waits">
 </p>
 
-The 6510 starts things. The boot file (`LOAD "ZX81",8`, `RUN`) loads
-`ZX64` (about 14K: the 6510's loader, your patched ROM and zx64) and
-starts it. `ZX64` sets up the VIC, makes a character set from the ZX81 ROM's, and hands
-over. The Z80 starts at `$0000`, like a ZX81 switched on. From then on
-the Z80 runs nearly all the time, and the 6510 only wakes up for the
-disk.
+The 6510 starts things. The boot file loads `ZX64`, about 14K holding
+the 6510's loader, your patched ROM and zx64, and starts it. `ZX64` sets
+up the VIC, makes a character set from the ZX81 ROM's, and hands over.
+The Z80 starts at `$0000`, like a ZX81 switched on. From then on the Z80
+runs nearly all the time, and the 6510 only wakes up for the disk.
 
 The Z80 sees the C64's memory shifted by 4K: where a ZX81 expects its
 ROM, at `$0000`, it finds the C64's `$1000`. The shift is the
@@ -75,10 +74,10 @@ monitor shows them.
 ### The picture
 
 A ZX81 has no video chip. With a little help from the ULA, its Z80 draws
-the picture itself, 50 times a second, from the screen's contents in RAM
-(the display file). That is why a ZX81 is slow in SLOW mode: most of its
-time goes into drawing. In FAST mode it stops drawing to compute, and
-the screen goes blank.
+the picture itself, 50 times a second, from the display file, the
+screen's contents in RAM. That is why a ZX81 is slow in SLOW mode: most
+of its time goes into drawing. In FAST mode it stops drawing to compute,
+and the screen goes blank.
 
 The C64's VIC draws a picture on its own; it only needs to be told what
 to show. So zx64 keeps the VIC's screen memory up to date instead: it
@@ -127,10 +126,9 @@ The disk is the 6510's job. For `LOAD` and `SAVE` the Z80 leaves a
 command and the name in a mailbox at `$2F00` and writes `$DE00`. The
 6510's loader, waiting since `RUN`, does the work, fills the bar on the
 top row, and switches back. The monitor's disk commands go the same way.
-It reads by JiffyDOS when the drive answers to it (about 3,400 bytes a
-second, seven times the kernal's speed), with its
-own code for the serial bus, and otherwise through the C64's kernal;
-it always writes through the kernal.
+It reads by JiffyDOS when the drive answers to it, with its own code for
+the serial bus: about 3,400 bytes a second, seven times the kernal's
+speed. Otherwise, and for writing, it uses the C64's kernal.
 
 ### What zx64 changes in the ROM
 
@@ -158,10 +156,10 @@ number and the A register. zx64 makes good use of that: it puts the
 keyboard rows exactly where a game's `IN A,($FE)` will read them, so
 games that read the keyboard themselves still work.
 
-The catch is the other way: a game that writes to an add-on the ZX81 may
-have had (a sound chip, a printer, a ZXpand) writes into memory instead,
-possibly into the ROM. `tools/pcheck.py` warns about such games when they
-go on the disk, and F7 repairs the ROM afterwards.
+The catch is the other way: a game that writes to a sound chip, a
+printer, a ZXpand or another add-on the ZX81 may have had writes into
+memory instead, possibly into the ROM. `tools/pcheck.py` warns about
+such games when they go on the disk, and F7 repairs the ROM afterwards.
 
 ## Getting started
 
@@ -173,9 +171,9 @@ zx64 was developed on this setup:
   (Individual Computers). Its USB serial link reads the C64's memory,
   which helped find several of the bugs.
 - DL2DW's [CP/M cartridge replica](https://codeberg.org/diwou/Commodore_CPM_Cartridge):
-  schematic, Gerbers and parts list, plus one wire for `/INT` (and,
-  optionally, an [LED](cpm-cart.md#led-while-the-z80-runs) that shows
-  which CPU has the machine).
+  schematic, Gerbers and parts list, plus one wire for `/INT`, and if you
+  like an [LED](cpm-cart.md#led-while-the-z80-runs) that shows which CPU
+  has the machine.
 - An [SD2IEC](https://www.tfw8b.com/sd2iec-info/).
 
 Other setups may work; reports are welcome.
@@ -199,7 +197,7 @@ You need:
   (`-cpmcart`), interrupt included, so no wire is needed.
 - Your own ZX81 ROM as `rom/zx81.rom` (8192 bytes, the standard
   second version).
-- GNU z80asm, acme, c1541 (from VICE) and Python 3 to build.
+- GNU z80asm, acme, c1541 from VICE, and Python 3 to build.
 
 ```sh
 cp ~/somewhere/zx81.rom rom/
@@ -212,13 +210,11 @@ Put `build/zx64.d64` on a disk for your drive, then on the C64:
     LOAD "ZX81",8
     RUN
 
-`LOAD` takes a second or two: the boot file is small. `RUN` loads the
-rest, `ZX64`, and shows what it loads. On a drive that speaks JiffyDOS
-(an SD2IEC does), it and the monitor take about 7 seconds, so F5 opens
-the monitor at once; the ZX81 is at its `K` cursor 3 seconds later,
-10 from `RUN`. Other drives are read the kernal's way (about 28 seconds
-on an SD2IEC; a 1541 or 1571 not yet timed), and F5 loads the monitor
-the first time.
+`LOAD` takes a second or two; `RUN` loads the rest. On a drive with
+JiffyDOS, like an SD2IEC, the ZX81 is ready about 10 seconds after
+`RUN`, with the monitor already loaded, so F5 opens it at once. Other
+drives load the kernal's way, in about half a minute, and F5 loads the
+monitor the first time.
 
 In VICE: `make vice`, and set the keyboard mapping to positional.
 
@@ -244,17 +240,13 @@ open locally: `docs/keyboard.html`.
 | F7 | reset |
 | F8 (SHIFT+F7) | memory: 16K, 32K, 1K (resets) |
 
-- **Type-ahead** (on by default): type at C64 speed.
+- **Type-ahead**, on at the start: type at C64 speed.
 - **Colour schemes**: black on white, white on black, green screen,
   amber, black on green, C64 blue.
-- **Memory** (F8): 16K, the default, as with Sinclair's RAM pack; 32K,
+- **Memory**: 16K, the default, as with Sinclair's RAM pack; 32K,
   RAM from `$4000` to `$BFFF`, all for BASIC; 1K, the bare ZX81.
-- **F7**: reset, keeping the settings (the joystick's layout too). A
-  ROM changed by a program is read again first, from the disk's `ZX64`
-  file, and the characters on the screen are
-  made again from it. If the disk has none, or one from
-  another version of zx64, the ROM stays as it is and the top row says
-  so: `ROM NOT RELOADED: NO ZX64` or `OTHER ZX64`.
+- **Reset**: the settings stay. If a program wrote over the ROM, it is
+  read again from the disk first.
 
 ## The games
 
@@ -271,10 +263,10 @@ Yes, games. `LOAD "MAZOGS"`, watch the bar fill, and off you go:
 </p>
 
 Most games should just work: those that draw with the ZX81's own
-characters and block graphics, as nearly all do. Every one tried so far plays,
-from Mazogs and 3D Monster Maze to 1K ZX Chess. Out of reach: hi-res and
-WRX graphics, and anything else that changes how the ZX81 draws its
-picture.
+characters and block graphics, as nearly all do. Every one tried so far
+plays, from Mazogs and 3D Monster Maze to 1K ZX Chess. Out of reach:
+hi-res and WRX graphics, and anything else that changes how the ZX81
+draws its picture.
 
 Put your `.p` files in `games/` and run `make`: they go on zx64's disk,
 and `tools/pcheck.py` tells you if one uses something zx64 can't do,
@@ -295,7 +287,7 @@ and the top row asks for each key in turn, a `?` at the one it wants:
 key, F5 gives up and keeps the layout as it was. After the fire key the
 program carries on with your layout, which stays until you switch off.
 
-On a diagonal, BASIC games (`INKEY$`) see the direction pressed last;
+On a diagonal, BASIC games see the direction pressed last;
 games that read the keyboard themselves see both. In FAST mode, holding
 F3 doesn't teach keys: F3 only switches.
 
@@ -306,7 +298,7 @@ in BASIC, the editor or the middle of a game, and zx64mon opens: a
 machine code monitor in the style of Jim Butterfield's Supermon, but for
 the Z80. Memory, a disassembler, an assembler, breakpoints, single
 stepping and the disk, on a 40-column screen with the C64's full
-keyboard. `X` (or F5) and the program carries on as if nothing happened.
+keyboard. `X` or F5, and the program carries on as if nothing happened.
 [See it on the real machine](img/demo.mp4).
 
 ZX81 owners in 1981 had a membrane keyboard, a tape recorder and `POKE`.
@@ -320,24 +312,24 @@ learn.
 </p>
 
 The screen editor works as the C64's. The monitor's headings and
-messages start with `#` (an error is `#?`): RETURN on such a line does
-nothing, so moving about the screen is safe. HOME goes to the top row,
-CTRL+HOME to the bottom one. A memory line from `M` or a
+messages start with `#`, an error is `#?`, and RETURN on such a line
+does nothing, so moving about the screen is safe. HOME goes to the top
+row, CTRL+HOME to the bottom one. A memory line from `M` or a
 disassembly line from `D` can be edited in place and entered again; on
-an `M` line, the hex or the characters (`PRINT` to `PRONT`). The
+an `M` line, the hex or the characters, `PRINT` to `PRONT` say. The
 characters are stored as they show: a reversed one as the inverse
-character, a plain one not. RVS ON and OFF work as on the C64 (CTRL+9,
-CTRL+0; RETURN turns it off too). A character the ZX81 hasn't got (`!`)
-is `?`. After RETURN the line is drawn again from memory, so it shows
-what was stored.
-Numbers are hex; `=` converts. RUN/STOP stops a long listing.
+character, a plain one not. RVS ON and OFF work as on the C64; RETURN
+turns it off too. A character the ZX81 hasn't got, such as `!`, is `?`.
+After RETURN the line is drawn again from memory, so it shows what was
+stored. Numbers are hex; `=` converts. RUN/STOP stops a long listing.
 
 CRSR UP on the top row and CRSR DOWN on the bottom one scroll an `M` or
 `D` listing: the line before or after it comes in, and `M` or `D` alone
 goes on after the last. Under a short listing, CRSR DOWN on the bottom
-row fills the rows down to it, and the cursor stays there. Going back in a `D` listing, the monitor finds
-the instruction before by disassembling from a few bytes earlier; data
-mixed with the code can make that come out differently.
+row fills the rows down to it, and the cursor stays there. Going back in
+a `D` listing, the monitor finds the instruction before by disassembling
+from a few bytes earlier; data mixed with the code can make that come
+out differently.
 
     M s [e]          memory, 8 bytes a line, with their ZX81 characters
     D s [e]          disassemble; M or D alone goes on
@@ -360,13 +352,13 @@ mixed with the code can make that come out differently.
     ?                help
 
 F5 works wherever zx64 reads the keyboard: always in SLOW mode, and in
-FAST mode at the prompt and between BASIC statements. There's no NMI, so FAST
-machine code that never reads the keyboard can't be stopped.
+FAST mode at the prompt and between BASIC statements. There's no NMI, so
+FAST machine code that never reads the keyboard can't be stopped.
 
 Nothing is protected: the ROM, zx64 and the C64's I/O are all memory, and
 the monitor changes whatever you tell it to. `:C020 02` makes the
-border red, from the Z80 (leaving the monitor puts the colours back). Only the disk commands refuse the 6510's page and the I/O
-chips.
+border red, from the Z80; leaving the monitor puts the colours back.
+Only the disk commands refuse the 6510's page and the I/O chips.
 
 ### Machine code in a REM line
 
@@ -382,7 +374,7 @@ Hello world. First the room for it, 23 bytes (`$17`): F5, and
 no program, it adds the line that runs it too, `10 RAND USR 16514`.
 
 Then `A` at `$4082`. After each line the monitor offers the next
-address; RETURN on an empty one ends (`A 4082` alone offers the first).
+address; RETURN on an empty one ends, and `A 4082` alone offers the first.
 Then the text, after the code, with `WORLD` typed in RVS ON:
 
     A 4082 LD HL,$408D
@@ -402,15 +394,15 @@ Then the text, after the code, with `WORLD` typed in RVS ON:
 </p>
 
 `RST $10` is the ZX81's CHROUT: it prints the character in A, keywords
-and NEWLINE too, and keeps BC, DE and HL (it works in the other register
-set, with `EXX`). The text ends with `FF` (see [Text in
-memory](#text-in-memory)): `INC A` makes it 0, and `RET Z` goes back to
-BASIC. `USR` returns BC as its value; `RAND USR` throws it away, `PRINT
-USR` would print it after the text. Leave IY alone (the ROM needs
-`$4000` in it), and IX.
+and NEWLINE too, and keeps BC, DE and HL: it works in the other register
+set, with `EXX`. The text ends with `FF`, as [Text in
+memory](#text-in-memory) explains: `INC A` makes it 0, and `RET Z` goes
+back to BASIC. `USR` returns BC as its value; `RAND USR` throws it away,
+`PRINT USR` would print it after the text. Leave IX alone, and IY, which
+the ROM needs to hold `$4000`.
 
 The assembler takes Zilog's mnemonics as `D` writes them, numbers as
-`$12` or with a leading digit, `0DE` (a bare `DE` is the register). It
+`$12` or with a leading digit, `0DE`; a bare `DE` is the register. It
 works by search: it tries encodings, disassembles each, and keeps the
 one that reads as your text, so whatever `D` prints, `A` takes back.
 That's up to about a second for the rarest instructions on the real
@@ -420,8 +412,8 @@ too. If the new instruction is shorter or longer than the old one, the
 is offered instead, as `A` does.
 
 `X`, then `LIST`: the `REM` now holds the code, shown as ZX81 characters
-and keywords, then `HELLO`, an inverse `WORLD`, and the `FF` as `COPY`
-(the keyword with that code). Some of the code is missing: `$7E` marks a
+and keywords, then `HELLO`, an inverse `WORLD`, and the `FF` as `COPY`,
+the keyword with that code. Some of the code is missing: `$7E` marks a
 number in a BASIC line, and `LIST` skips the 5 bytes after it. `RUN`
 prints the same, `WORLD` inverse. `M 4082 4099` shows all the bytes, and
 the text:
@@ -440,8 +432,8 @@ BASIC as after `L`: report 0, not back to what was running.
 
 The code has to be assembled where it runs, at `$4082` on: `A` uses the
 address it writes to for jumps and calls, so code tried out at `$7000`
-doesn't work from the `REM` unless it only uses relative jumps (`JR`,
-`DJNZ`).
+doesn't work from the `REM` unless it only uses relative jumps, `JR` and
+`DJNZ`.
 
 To watch it run, set a breakpoint on the `RST $10`:
 
@@ -454,8 +446,8 @@ To watch it run, set a breakpoint on the `RST $10`:
 `S` steps one instruction instead; on the `RST $10` it goes into the
 ROM, at `$0010`. RETURN steps again; to go on, delete the `S` and type
 `G`. A breakpoint is a `RST $38` in place of the instruction's first
-byte; zx64's interrupt handler tells it from an
-interrupt. It works without the `/INT` wire too. The monitor puts the
+byte; zx64's interrupt handler tells it from an interrupt. It works
+without the `/INT` wire too. The monitor puts the
 real bytes back while it's open, so `M` and `D` show the code as it is.
 Not possible: breakpoints in zx64 or the monitor (`$2000-$3FFF`), at
 `$0038`, or from `$C000` up.
@@ -478,10 +470,10 @@ Or straight into the Z80's registers, without BASIC at all. F5, then
     A 7000 ADD HL,DE
     R
 
-On the `;` line, note the PC (where F5 stopped the ZX81), type `7000`
-over it, `4321` over DE and `1234` over HL, and RETURN. `S` runs that
-one instruction: HL is `5555`. Then delete the `S` offered, put the old
-PC back on the `;` line, and `X`: the ZX81 goes on as it was.
+On the `;` line, note the PC: it's where F5 stopped the ZX81. Type
+`7000` over it, `4321` over DE and `1234` over HL, and RETURN. `S` runs
+that one instruction: HL is `5555`. Then delete the `S` offered, put the
+old PC back on the `;` line, and `X`: the ZX81 goes on as it was.
 
 ### Reading the ROM
 
@@ -519,8 +511,8 @@ the ROM finds keywords by their position in the table, not their text.
 F7 notices the changed ROM and reads it again from the disk, with the
 bar on the top row: " LOADING ZX81 ROM".
 
-The same as text: `:01C3 'WRIT' AA` (`AA` is an inverse `E`). Or `M 01C3`
-and type over `PRINT` on its line.
+The same as text: `:01C3 'WRIT' AA`, where `AA` is an inverse `E`. Or
+`M 01C3` and type over `PRINT` on its line.
 
 ### Text in memory
 
@@ -534,13 +526,14 @@ monitor offers the next line to go on with:
 
 The second line's `:7019 '` is the monitor's; type the rest after it.
 Spaces at a line's end are left out, so the space between the words
-starts the second line (or close the first with `'`). RETURN on the
+starts the second line; or close the first with `'`. RETURN on the
 offered line with nothing added ends.
 
 The `FF` ends the string. Not `00`: that's the ZX81's space. The ROM's
-own ways are an inverse last character (the keyword table) and `$76`,
-NEWLINE (BASIC lines, the display file); `$FF` isn't a character at all,
-and `INC A` / `JR Z` finds it. `H 7000 7FFF 'LAZY` finds the text again.
+own ways are an inverse last character, as in the keyword table, and
+`$76`, NEWLINE, which ends BASIC lines and the display file's rows.
+`$FF` isn't a character at all, and `INC A` / `JR Z` finds it. `H 7000
+7FFF 'LAZY` finds the text again.
 
 ### Disk commands
 
@@ -552,11 +545,11 @@ monitor:
     L "HELLO"                #LOADED 4009-xxxx; D 4082 shows its code
     W "HELLO"                saved again, changes and all
 
-After `L`, leaving the monitor (`X`, `G` or F5) goes on as `LOAD` does:
+After `L`, leaving the monitor with `X`, `G` or F5 goes on as `LOAD` does:
 what was running is gone, a program saved from a program line runs, and
 any other stops at the K cursor with report 0. `L` refuses a file that
-isn't a program (`#? NOT A PROGRAM`, as `LOAD` gives report D) or that
-doesn't fit (`#? TOO BIG`, report 4), before anything is written.
+isn't a program, `#? NOT A PROGRAM`, or one that doesn't fit, `#? TOO
+BIG`, before anything is written; `LOAD` gives reports D and 4 for them.
 
 With addresses they are for memory. `W "NAME" s e` writes s-e as a PRG
 with the C64's load address, so `LOAD "NAME",8,1` on a plain C64 puts it
@@ -575,7 +568,7 @@ The text goes to the drive as it is, so an SD2IEC's own commands work
 from here too, without leaving the ZX81:
 
     @CD:GAMES.D64            mount another disk image
-    @CD:←                    and back (← is the C64's left arrow key)
+    @CD:←                    and back
 
 ## The test programs
 
@@ -583,20 +576,21 @@ The d64 always has four, made from `progs/*.bas` with zx64's addresses
 filled in. Each runs as it loads.
 
 - **`SPEED`** checks the setup and times 50 turns of an empty `FOR`
-  loop. PAL or NTSC; `/INT SEEN: 1` means the wire works; stray IRQs
-  are interrupts the VIC didn't raise (noise on the wire). zx64 takes 30
-  frames, a UK ZX81 56-58 (see [The picture](#the-picture)). In FAST mode
-  it's the other way round: the ZX81's 3.25 MHz Z80 is about twice as
-  fast as the cartridge's, which gets about 1.8 T-states per C64 cycle.
+  loop. PAL or NTSC; `/INT SEEN: 1` means the wire works; stray IRQs,
+  interrupts the VIC didn't raise, mean noise on the wire. zx64 takes 30
+  frames, a UK ZX81 56-58, as [The picture](#the-picture) explains. In
+  FAST mode it's the other way round: the ZX81's 3.25 MHz Z80 is about
+  twice as fast as the cartridge's, which gets about 1.8 T-states per
+  C64 cycle.
 - **`MEM`** tests every free byte: machine code in a `REM` writes a
   pattern from each byte's address into all of them, reads them back,
   then the same with the complement. 14,728 bytes in 16K, 31,112 in 32K.
 - **`PAUSE`** does `PAUSE 500` between GO and STOP: 10 seconds on PAL,
   to time with a stopwatch. A check that the interrupt comes 50 times a
   second.
-- **`FAST`** counts to 100 in FAST mode (the picture holds), prints how
-  many frames went by meanwhile (0, as on a ZX81), then loops in FAST
-  for you to stop with SPACE or RUN/STOP (report D/230).
+- **`FAST`** counts to 100 in FAST mode while the picture holds, prints
+  how many frames went by meanwhile, 0 as on a ZX81, then loops in FAST
+  for you to stop with SPACE or RUN/STOP: report D/230.
 
 ## Troubleshooting
 
@@ -607,8 +601,8 @@ filled in. Each runs as it loads.
 - **"NO Z80: ZX64 NEEDS THE C64 CP/M CARTRIDGE."** zx64 found no Z80:
   no cartridge, or it isn't seated.
 - **"ZX64 NOT LOADED"** after `RUN`: the disk has the boot file, `ZX81`,
-  but not `ZX64` (or a disk error). Put all of `build/zx64.d64`'s files
-  on it (`ZX81`, `ZX64`, `zx64mon`, `zx64mon2`).
+  but not `ZX64`, or there was a disk error. Put all four files of
+  `build/zx64.d64` on it: `ZX81`, `ZX64`, `zx64mon` and `zx64mon2`.
 - **Report D on LOAD.** The file isn't on the drive zx64 came
   from, under that name or with `.P`. `@` in the monitor shows the
   drive's message.
@@ -616,6 +610,9 @@ filled in. Each runs as it loads.
   `tools/pcheck.py -v` shows its `OUT`s and where they land. F7 repairs
   the ROM, but not zx64's own code: the top row then says `ZX64 CHANGED:
   LOAD IT AGAIN`; load the boot file again.
+- **"ROM NOT RELOADED: NO ZX64"** or **"OTHER ZX64"** on F7: the disk
+  in the drive has no `ZX64`, or one from another version of zx64. The
+  ROM stays as it is.
 - **"NO ZX64MON ON THE DISK"** on F5: the files `zx64mon` and `zx64mon2`
   aren't on the drive zx64 booted from.
 - **Typing in VICE gives the wrong keys.** Set VICE's keyboard mapping
