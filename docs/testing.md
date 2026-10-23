@@ -11,6 +11,9 @@ Emulator: VICE (`x64sc -cpmcart`, 3.7.1 and 3.10).
 
 ## make test
 
+`make` and `make test` pass on macOS, on Fedora on a ThinkPad, and in
+clean containers of Debian 13, Ubuntu 24.04 and Fedora 42.
+
 `tools/simulate.py` runs the patched ROM and zx64 on a Z80 emulator and
 the 6510 loader on a 6502 emulator, switching as the cartridge does,
 with a fake VIC, CIA, colour RAM, kernal and drive (and a JiffyDOS

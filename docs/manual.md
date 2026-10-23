@@ -199,6 +199,34 @@ You need:
   second version).
 - GNU z80asm, acme, c1541 from VICE, and Python 3 to build.
 
+The tools on macOS, Ubuntu and Debian; Debian has VICE in its contrib
+section, which has to be enabled first:
+
+```sh
+brew install z80asm acme vice           # macOS
+sudo apt install z80asm acme vice       # Ubuntu, Debian
+```
+
+On Fedora, z80asm is a package and VICE is in RPM Fusion's nonfree
+repository; acme is built from source, in a few seconds:
+
+```sh
+sudo dnf install z80asm vice
+git clone https://salsa.debian.org/debian/acme.git
+make -C acme/src
+cp acme/src/acme ~/bin/
+```
+
+`make test` also needs the z80 and py65 Python packages, and a C++
+compiler to build z80: `build-essential python3-dev python3-venv` on
+Ubuntu and Debian, `gcc-c++ python3-devel` on Fedora.
+
+```sh
+python3 -m venv .venv && .venv/bin/pip install z80 py65
+```
+
+Then the ROM, any games, and `make`:
+
 ```sh
 cp ~/somewhere/zx81.rom rom/
 cp ~/somewhere/*.p games/       # any games for the disk

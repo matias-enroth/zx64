@@ -246,7 +246,10 @@ def run(*cmd, cwd=None):
         r = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True, errors="replace")
     except FileNotFoundError:
         sys.exit(f"{cmd[0]} not found. zx64 needs GNU z80asm, acme and c1541 (VICE):\n"
-                 "  brew install z80asm acme vice   /   apt install z80asm acme vice")
+                 "  macOS: brew install z80asm acme vice\n"
+                 "  Ubuntu, Debian: apt install z80asm acme vice (Debian: VICE is in contrib)\n"
+                 "  Fedora: dnf install z80asm, VICE from RPM Fusion, acme from source\n"
+                 "  (docs/manual.md, Building and booting)")
     if r.returncode:
         sys.exit(f"{' '.join(cmd)} failed:\n{r.stdout}{r.stderr}")
     return r.stdout
