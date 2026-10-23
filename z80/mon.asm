@@ -67,6 +67,7 @@ BACKCOL:  equ 6
 TEXTCOL:  equ 14
 
 K_RETURN: equ 13                ; key codes, as PETSCII
+K_SRET:  equ 141                ; SHIFT+RETURN
 K_RVSON: equ 18
 K_RVSOFF: equ 146
 K_BOTTOM: equ 4                 ; CTRL+HOME (no PETSCII of its own)
@@ -135,7 +136,7 @@ en_f5:  call scr_on
 en_hello:
         call lstart
         call putsi
-        db "ZX64MON ",0
+        db "#ZX64MON ",0
         ld hl,verstr
         call puts
         call putsi
@@ -678,6 +679,8 @@ gl_key: call getkey
         jp z,gl_ret
         ld hl,gl_key            ; each of these comes back to gl_key
         push hl
+        cp K_SRET               ; SHIFT+RETURN: the next row, nothing taken,
+        jp z,down               ; as on the C64
         cp K_RIGHT
         jr z,crright
         cp K_LEFT
@@ -1007,6 +1010,8 @@ ex_nx:  inc hl
         jr ex_sk
 ex_cmd: or a
         jp z,prompt             ; an empty line
+        cp '#'                  ; a line to read, not to run (headings and
+        ret z                   ; messages): no prompt, the line under it next
         inc hl
         ld (lptr),hl
         ld hl,cmds
@@ -1080,13 +1085,15 @@ cmds:   db 'M'
         dw cmd_z
         db 0
 
-err:    ld sp,MSTACK            ; "?", and the prompt
-        call lstart
-        ld a,'?'
-        call pch
-        call down
+err:    ld sp,MSTACK            ; "#?", and the prompt
+        call qline
         call prompt
         jp main
+
+qline:  call lstart             ; "#?" on a line of its own (RETURN on it:
+        call putsi              ; nothing)
+        db "#?",0
+        jp down
 
 quietly:
         ld a,1
@@ -1418,7 +1425,7 @@ zlen:   ld hl,(a1)              ; the length: REM, n bytes, NEWLINE
         push hl
         call lstart
         call putsi
-        db "REM 4082-",0
+        db "#REM 4082-",0
         pop hl
         call phex4
         jp down
@@ -1482,7 +1489,7 @@ zm_dn:  inc hl                  ; back: from the first byte up
 cmd_r:  call r_main
         call lstart
         call putsi
-        db " AF'  BC'  DE'  HL'  I  IF",0
+        db "#AF'  BC'  DE'  HL'  I  IF",0
         call down
         call lstart
         ld a,$27
@@ -1500,7 +1507,7 @@ cmd_r:  call r_main
 
 r_main: call lstart             ; the main registers' two lines
         call putsi
-        db " PC   AF   BC   DE   HL   SP   IX   IY",0
+        db "#PC   AF   BC   DE   HL   SP   IX   IY",0
         call down
         call lstart
         ld a,';'
@@ -1770,7 +1777,6 @@ help:   db "M S [E]     MEMORY, 8 BYTES A LINE",0
         db "H S E B ... HUNT BYTES; H S E 'TEXT",0
         db "= N         HEX, +DEC, %BIN: ALL THREE",0
         db "Z N         LINE 1: A REM OF N BYTES",0
-        db "F5         BACK TO THE ZX81",0
         db 0
 
 ; ---------------------------------------------------------------- parsing
@@ -2654,7 +2660,7 @@ b_off:  ld a,(ubn)              ; DE: the one to go; the last one there
         ld (de),a
 b_list: call lstart
         call putsi
-        db "BREAKPOINTS",0
+        db "#BREAKPOINTS",0
         ld a,(ubn)
         or a
         jr z,bl_end
@@ -2834,7 +2840,7 @@ bpshow: ld a,(mmode)
         jr z,bs_step
         call lstart
         call putsi
-        db "BREAKPOINT",0
+        db "#BREAKPOINT",0
         call down
         call cmd_r
         jr bs_d
@@ -3035,10 +3041,7 @@ a_none: ld hl,(aaddr)            ; no instruction: on the line offered (a
         ret z
         ld (dnext),de
         jr a_next
-a_err:  call lstart
-        ld a,'?'
-        call pch
-        call down
+a_err:  call qline
         ld hl,(aaddr)           ; the same address again
         ld (dnext),hl
         jr a_next
@@ -3490,7 +3493,7 @@ cmd_l:  ld hl,(lptr)
         jp nz,derr
         call lstart
         call putsi
-        db "LOADED ",0
+        db "#LOADED ",0
         ld hl,(MBOX+$22)
         ld de,-$1000
         add hl,de
@@ -3518,17 +3521,17 @@ l_prog: ld (msp),sp
         jp nz,derr
         call lstart
         call putsi
-        db "? NOT A PROGRAM",0
+        db "#? NOT A PROGRAM",0
         jp down
 lp_big: call lstart
         call putsi
-        db "? TOO BIG",0
+        db "#? TOO BIG",0
         jp down
 lp_ok:  ld a,1
         ld (loaded),a
         call lstart
         call putsi
-        db "LOADED 4009-",0
+        db "#LOADED 4009-",0
         ld hl,($4014)           ; E_LINE
         dec hl
         call phex4
@@ -3594,10 +3597,8 @@ at3:    ld a,b
         ld (MBOX+2),a
         jr dstat
 
-derr:   call lstart             ; something went wrong: "?", and what the
-        ld a,'?'                ; drive says
-        call pch
-        call down
+derr:   call qline              ; something went wrong: "#?", and what the
+                                ; drive says
 dstat0: xor a                   ; no command: just the status
         ld (MBOX+2),a
 dstat:  ld a,CMD_DCMD           ; the drive's status line

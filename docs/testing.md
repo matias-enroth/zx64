@@ -3,11 +3,11 @@
 Cartridge: DL2DW's replica with the `/INT` wire. Drive: SD2IEC.
 Emulator: VICE (`x64sc -cpmcart`, 3.7.1 and 3.10).
 
-| C64 | Board | Result |
-|---|---|---|
-| C64 Reloaded MK2 | | everything below |
-| [C64 Reloaded](https://wiki.icomp.de/wiki/C64_reloaded) | the first one, before the MK2 | crashed within seconds of the Z80's LED lighting (2026-10-21, the build before the boot stub) |
-| C64 (breadbin) | 250407 rev B | zx64 and Mazogs load; left on Mazogs's title screen, it crashed within a few minutes (2026-10-20), as CP/M did on it ([the cartridge is picky](manual.md#the-hardware)) |
+| C64 | Result |
+|---|---|
+| C64 Reloaded MK2 | works: everything below |
+| C64 Reloaded (the first) | crashes seconds after the Z80 starts |
+| Breadbin #1, 250407 rev B | crashes after a few minutes, in Mazogs (CP/M too) |
 
 ## make test
 
@@ -16,7 +16,7 @@ the 6510 loader on a 6502 emulator, switching as the cartridge does,
 with a fake VIC, CIA, colour RAM, kernal and drive (and a JiffyDOS
 drive on the serial bus, timed to the cycle). It types and reads the
 screen. It needs the z80 and py65 packages (`python3 -m venv .venv &&
-.venv/bin/pip install z80 py65`). 165 checks, with and without `/INT`,
+.venv/bin/pip install z80 py65`). 169 checks, with and without `/INT`,
 covering:
 
 - boot, typing, type-ahead and F1 (TEST typed fast: no ghost F; a key
@@ -68,7 +68,8 @@ covering:
 - the monitor: every command (`=` in all three bases, and `?` past
   $FFFF); D over 123 instructions and the whole ROM;
   A assembling everything D shows; S's next-PC for 16 kinds of branch;
-  breakpoints with and without `/INT`; the disk commands
+  breakpoints with and without `/INT`; the disk commands; RETURN on
+  the `#` title and headings (nothing), SHIFT+RETURN (the next line)
 - pcheck on a program made to trip each warning
 - the loading bar and spinner, the version banner
 
@@ -188,6 +189,8 @@ Seen on the C64 with 1.1:
 - [x] The F-keys moved: F3 the joystick (a tap switches, held a second
       teaches), F8 (SHIFT+F7) the memory size, SHIFT+F5 the monitor as F5;
       F7 alone still a reset
+- [x] The manual's monitor examples: `ADD HL,DE` set up on the `;` line
+      and stepped with `S` (HL `5555`), and `:C020 02` (a red border)
 
 Not yet tried there:
 

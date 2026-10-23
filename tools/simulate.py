@@ -1807,7 +1807,7 @@ def main():
     check("F5: zx64mon loaded to $3000, its own screen (VIC bank 0, $0400, 40x25), the registers",
           m.drive.opens == opens + 2 and bytes(m.z.memory[0x3000:mlb["kmods"]]) == mon[2:mlb["kmods"] - 0x3000 + 2]
           and m.z.memory[0xC018] == 0x14 and m.z.memory[0xCD00] & 3 == 3
-          and scr[0].startswith("ZX64MON 1.0") and scr[2].startswith(";") and scr[4].startswith("'"),
+          and scr[0].startswith("#ZX64MON 1.0") and scr[2].startswith(";") and scr[4].startswith("'"),
           f"{scr[:5]}")
     f0, d0 = m.frames, m.peek16(mlb["nframes"])
     m.run(100)
@@ -1818,6 +1818,27 @@ def main():
     col = bytes(m.z.memory[0xC800:0xC800 + 1000])
     check("the monitor's colours: every cell light blue (14), however colour RAM reads",
           all(c & 15 == 14 for c in col), f"{sum(1 for c in col if c & 15 != 14)} cells wrong")
+    rom = bytes(m.z.memory[0x0000:0x2000])
+    before, rows = m.mscreen()[:6], []
+    for row in (0, 1, 3):                        # the title (#ZX64MON, else Z), #PC ..., #AF' ...
+        m.mkey("HOME")
+        for _ in range(row):
+            m.mkey("CRSRDOWN")
+        m.mtype("\r", settle=20)
+        rows.append(m.z.memory[mlb["crow"]])
+    check("RETURN on the title and the registers' headings (#ZX64MON, #PC, #AF'): nothing run, no ?, the "
+          "screen as it was, the cursor on the line under it", before[1].startswith("#PC")
+          and before[3].startswith("#AF'") and before[0].startswith("#ZX64MON")
+          and m.mscreen()[:6] == before and rows == [1, 2, 4] and bytes(m.z.memory[0x0000:0x2000]) == rom,
+          f"rows {rows}, {m.mscreen()[:6]}")
+    m.mkey("HOME", "LSHIFT")                     # CLR
+    m.mtype("M 7000", settle=0)
+    m.mkey("RETURN", "LSHIFT")
+    m.run(10)
+    row = m.z.memory[mlb["crow"]]
+    check("SHIFT+RETURN: the next row's start, the line not run (as on the C64)",
+          m.mscreen()[0].startswith("M 7000") and not any(r.startswith(".:7000") for r in m.mscreen())
+          and row == 1 and m.z.memory[mlb["ccol"]] == 0, f"row {row}, {m.mscreen()[:3]}")
     m.mkey("CTRL", "HOME")
     m.mtype("Q", settle=0)
     m.mkey("HOME")
@@ -1874,7 +1895,7 @@ def main():
           shown == (".:7300 35 37 2E 33 39 00 A6 F5 PRINT A.", "------rr")
           and [g[0] for g in got] == ["353734333900A6F5", "35373433390027F5", "353734333900A7F5",
                                       "B53734333900A7F5", "B5373433390026F5", "B5373433390026F5"]
-          and got[5][3] == "?", f"{shown} {got}")
+          and got[5][3] == "#?", f"{shown} {got}")
     check("RETURN on an M line: the line drawn again from memory, reversed as stored",
           got[0][1:3] == (".:7300 35 37 34 33 39 00 A6 F5 PRONT A.", "------rr")
           and got[2][1:3] == (".:7300 35 37 34 33 39 00 A7 F5 PRONT B.", "------rr")
@@ -1909,7 +1930,7 @@ def main():
           nxt == ":7420 '" and mem[:0x2C] == zxs(fox) + b"\xFF" and nxt2 == ":7519 '"
           and bytes(m.z.memory[0x7500:0x752C]) == zxs(fox) + b"\xFF" and not end.startswith(":")
           and mem[0x40:0x42] == zxs("A") + b"\x99" and mem[0x50:0x55] == b"\x01" + zxs("AB") + b"\x02\x99"
-          and mem[0x60:0x62] == b"\x99\x99" and rows[2] == "?" and mem[0x70] == 0x99
+          and mem[0x60:0x62] == b"\x99\x99" and rows[2] == "#?" and mem[0x70] == 0x99
           and not any(r.startswith(":") for r in rows) and mem[0x80:0x84] == zxs("AB ") + b"\x99",
           f"{nxt!r} {end!r} {rows} {mem[:0x2C].hex()} {mem[0x40:].hex()}")
     m.mtype(":7380 'HELLO ")
@@ -1956,8 +1977,8 @@ def main():
              ("= 0", "= $0000 +0 %00000000"), ("= +65535", "= $FFFF +65535 %11111111 11111111"),
              ("= %100000000", "= $0100 +256 %00000001 00000000"),
              ("= $C000 +49152 %11000000 00000000", "= $C000 +49152 %11000000 00000000"),
-             ("= +65536", "?"), ("= 10000", "?"), ("= +12A", "?"), ("= %102", "?"), ("=", "?"),
-             ("= +", "?")]
+             ("= +65536", "#?"), ("= 10000", "#?"), ("= +12A", "#?"), ("= %102", "#?"), ("=", "#?"),
+             ("= +", "#?")]
     bad = [(t, got) for t, want in cases if (got := conv(t)) != want]
     check("= n: hex, +decimal or %binary in, all three out; RETURN on that line again; "
           "too big or not a number: ?", not bad, f"{bad}")
@@ -2111,15 +2132,15 @@ def main():
     w_ok = t1 == b"\x00\x80" + bytes([1, 2, 3]) + b"\x5A" * 13 and last(1) == ["00, OK,00,00"]
     m.mtype("F 7000 701F 00\r")
     m.mtype('L "T1" 7100\r', settle=30)
-    l1 = bytes(m.z.memory[0x7100:0x7110]) == t1[2:] and last(1) == ["LOADED 7100-710F"]
+    l1 = bytes(m.z.memory[0x7100:0x7110]) == t1[2:] and last(1) == ["#LOADED 7100-710F"]
     m.mtype("L T1 7000\r", settle=30)            # no quotes; no address would be a program
-    l2 = bytes(m.z.memory[0x7000:0x7010]) == t1[2:] and last(1) == ["LOADED 7000-700F"]
+    l2 = bytes(m.z.memory[0x7000:0x7010]) == t1[2:] and last(1) == ["#LOADED 7000-700F"]
     m.mtype("L T1\r", settle=30)
-    l2 = l2 and last(1) == ["? NOT A PROGRAM"]
+    l2 = l2 and last(1) == ["#? NOT A PROGRAM"]
     m.mtype('L "T1" F000\r', settle=30)          # C64 $0000: the 6510's page
-    l3 = last(2) == ["?", "00, OK,00,00"]
+    l3 = last(2) == ["#?", "00, OK,00,00"]
     m.mtype('L "NOPE"\r', settle=30)
-    l4 = last(2) == ["?", "62,FILE NOT FOUND,00,00"]
+    l4 = last(2) == ["#?", "62,FILE NOT FOUND,00,00"]
     m.mkey("HOME", "LSHIFT")
     m.mtype("$\r", settle=60)
     scr = m.mscreen()
@@ -2148,7 +2169,7 @@ def main():
     m.run(100)                                   # the first F5's message runs out
     r = enter(m, "P 2 SHIFT+K 2")
     check("? (help); X: back to the ZX81, its picture, colours and raster IRQ as they were; PRINT 2+2",
-          any(r.startswith("F5") for r in m.mscreen()) and m.z.memory[0xC018] == 0x8A
+          any(r.startswith("Z N") for r in m.mscreen()) and m.z.memory[0xC018] == 0x8A
           and m.z.memory[0xCD00] & 3 == 0 and all(c & 15 == 0 for c in m.z.memory[0xC800:0xC800 + 1000])
           and m.z.memory[0xC011] == 0x17 and m.screen()[0] == "4" and r == "0/0",
           f"$D011 ${m.z.memory[0xC011]:02X}, {m.screen()[0]!r} {r}")
@@ -2207,7 +2228,7 @@ def main():
     m.tap("F5")
     scr = m.mscreen()
     check("after a C64 reset: F5 loads zx64mon again (not the one left in RAM), on a clear screen",
-          m.drive.opens == opens + 2 and scr[0].startswith("ZX64MON") and not any("FOX" in r for r in scr),
+          m.drive.opens == opens + 2 and scr[0].startswith("#ZX64MON") and not any("FOX" in r for r in scr),
           f"{m.drive.opens - opens} opens, {scr[:3]}")
 
     m = Machine(int_wired=True)                  # a program running: F5 stops it
@@ -2268,7 +2289,7 @@ def main():
     m.run(30)
     scr = m.mscreen()
     regs = next((r for r in reversed(scr) if r.startswith(";")), "")
-    hit = (m.z.memory[0xC018] == 0x14 and "BREAKPOINT" in scr and regs.startswith(";7002 01")
+    hit = (m.z.memory[0xC018] == 0x14 and "#BREAKPOINT" in scr and regs.startswith(";7002 01")
            and m.z.memory[0x7002] == 0x3C and ".,7002 3C          INC A" in scr)
     m.mtype("\r")                                 # the prompt is ".": on to S
     m.mtype("S\r", settle=20)
@@ -2299,7 +2320,7 @@ def main():
     m.mtype("B 7003\r")
     m.mtype("B 7004\r")
     m.mtype("B 7004\r")                          # again: off
-    listed = next((r for r in reversed(m.mscreen()) if r.startswith("BREAKPOINTS")), "")
+    listed = next((r for r in reversed(m.mscreen()) if r.startswith("#BREAKPOINTS")), "")
     m.mtype("X\r", settle=20)
     m.type("T SHIFT+NEWLINE L 2 8 6 7 2")
     m.keys = {C64KEY[ZXKEY["NEWLINE"]]}
@@ -2311,7 +2332,7 @@ def main():
     m.until(m.ready, 300, "the ROM ready for a key")
     m.run(3)
     check("no /INT: B 7003, B 7004 twice (off); stopped at 7003 (A = 2), G on to the end",
-          listed == "BREAKPOINTS 7003" and regs.startswith(";7003 02") and m.z.memory[0x7100] == 3
+          listed == "#BREAKPOINTS 7003" and regs.startswith(";7003 02") and m.z.memory[0x7100] == 3
           and report(m) == "0/0", f"{listed!r} {regs[:10]!r} {report(m)}")
 
     # scrolling at the screen's edges: CRSR DOWN on the bottom row goes on
@@ -2481,7 +2502,7 @@ def main():
     r1 = enter(m, "R")
     check("Z 10 with no program: 1 REM, 15 NOPs and a RET, and 10 RAND USR 16514; REM 4082-4091; X: "
           "BASIC, report 0; RUN: the RET, 0/10. Z 0, Z 4000, Z alone: ?",
-          outs == ["?", "?", "?", "REM 4082-4091"] and p1 == zrem(16, bytes(15) + b"\xC9") + line10
+          outs == ["#?", "#?", "#?", "#REM 4082-4091"] and p1 == zrem(16, bytes(15) + b"\xC9") + line10
           and r0 == "0/0" and r1 == "0/10", f"{outs} {p1.hex()} {r0} {r1}")
     m.tap("F5")
     out = zout("Z 17")
@@ -2500,18 +2521,18 @@ def main():
     shown = m.screen()[0]
     check("the manual's hello world: Z 17 grows the REM to 23 bytes (NOPs, the RET kept), A at $4082, "
           ":408D 'HELLO {RVS ON}WORLD{RVS OFF}' FF; RUN: HELLO and an inverse WORLD",
-          out == "REM 4082-4098" and p2[:5] == zrem(23, b"")[:5] and p2[29:] == line10
+          out == "#REM 4082-4098" and p2[:5] == zrem(23, b"")[:5] and p2[29:] == line10
           and shown == "HELLO world" and r2 == "0/10", f"{out} {p2.hex()} {shown!r} {r2}")
     m.tap("F5")
     vars0, eline0 = m.peek16(0x4010), m.peek16(0x4014)
     out = zout("Z 8")
     p3 = prog()
     check("Z 8: the REM cut to its first 8 bytes, the rest moved back (VARS, E_LINE 15 less)",
-          out == "REM 4082-4089" and p3 == zrem(8, p2[5:13]) + line10
+          out == "#REM 4082-4089" and p3 == zrem(8, p2[5:13]) + line10
           and m.peek16(0x4010) == vars0 - 15 and m.peek16(0x4014) == eline0 - 15,
           f"{out} {p3.hex()} {m.peek16(0x4010):04X} {vars0:04X}")
     big = zout("Z 3F00")
-    check("Z 3F00: no room below the ZX81's stack: ?, nothing changed", big == "?" and prog() == p3, big)
+    check("Z 3F00: no room below the ZX81's stack: ?, nothing changed", big == "#?" and prog() == p3, big)
 
     m = Machine(int_wired=True)                  # a program without line 1; line 1 no REM
     m.boot()
@@ -2531,8 +2552,8 @@ def main():
     out2 = zout("Z 4")
     check("Z 4 before 10 PRINT 5: 1 REM (3 NOPs, a RET) made, the program after it; RUN prints 5. "
           "Line 1 a PRINT: ?",
-          out == "REM 4082-4085" and p4 == zrem(4, b"\0\0\0\xC9") + p0 and shown == "5" and r4 == "0/10"
-          and out2 == "?", f"{out} {p4.hex()} {shown!r} {r4} {out2}")
+          out == "#REM 4082-4085" and p4 == zrem(4, b"\0\0\0\xC9") + p0 and shown == "5" and r4 == "0/10"
+          and out2 == "#?", f"{out} {p4.hex()} {shown!r} {r4} {out2}")
 
     # L and W without addresses: a program, as BASIC's LOAD and SAVE; with
     # them, memory as a PRG. A file that isn't a program is refused
@@ -2556,7 +2577,7 @@ def main():
     raw = bytes(m.z.memory[0x7100:0x7120]) == b"\x50" * 32
     m.mtype('L "SPEED"\r', settle=200)
     scr = m.mscreen()
-    loaded = next((r for r in reversed(scr) if r.startswith("LOADED")), "")
+    loaded = next((r for r in reversed(scr) if r.startswith("#LOADED")), "")
     same = bytes(m.z.memory[0x4009:0x4009 + len(speed)]) == speed
     m.mtype("X\r", settle=20)
     m.until(m.ready, 300, "the ROM ready for a key")
@@ -2565,8 +2586,8 @@ def main():
     check("L \"NAME\": a program, as LOAD (SPEED: $4009 on as the file; X: it runs, as it does after LOAD); "
           "a PRG of code: "
           "? NOT A PROGRAM, too big: ? TOO BIG, none: ?, nothing changed; L \"NAME\" a: still raw",
-          outs[0] == "? NOT A PROGRAM" and outs[1] == "? TOO BIG" and outs[2] == "?" and kept and raw
-          and loaded == "LOADED 4009-4593" and same and r is not None and r.startswith("0/")
+          outs[0] == "#? NOT A PROGRAM" and outs[1] == "#? TOO BIG" and outs[2] == "#?" and kept and raw
+          and loaded == "#LOADED 4009-4593" and same and r is not None and r.startswith("0/")
           and m.screen()[0] == "ZX64 SPEED TEST", f"{outs} {kept} {raw} {loaded!r} {same} {r} {m.screen()[0]!r}")
     m.tap("F5")
     m.mtype('W "SAVED"\r', settle=200)
@@ -2647,7 +2668,7 @@ def main():
     m.tap("F5")
     check("JiffyDOS: F5 loads zx64mon's two files by it, the monitor runs",
           bytes(m.z.memory[0x3000:mlb["kmods"]]) == mon[2:mlb["kmods"] - 0x3000 + 2]
-          and m.iec.sent - sent == len(mon) + len(mon2) and m.mscreen()[0].startswith("ZX64MON"),
+          and m.iec.sent - sent == len(mon) + len(mon2) and m.mscreen()[0].startswith("#ZX64MON"),
           f"{m.iec.sent - sent} bytes of {len(mon) + len(mon2)}, {m.mscreen()[0]!r}")
     row = lambda: m.z.memory[mlb["crow"]]
     t1 = b"\x00\x80" + bytes(range(1, 200))
@@ -2655,7 +2676,7 @@ def main():
     sent = m.iec.sent
     m.mtype('L "T1" 7100\r', settle=30)
     l1 = (bytes(m.z.memory[0x7100:0x7100 + len(t1) - 2]) == t1[2:]
-          and m.mscreen()[row() - 1] == f"LOADED 7100-{0x7100 + len(t1) - 3:04X}")
+          and m.mscreen()[row() - 1] == f"#LOADED 7100-{0x7100 + len(t1) - 3:04X}")
     check("JiffyDOS: the monitor's L by it on the monitor's screen: the VIC bank kept (0), the guard "
           "on y-scroll 3", l1 and m.iec.sent - sent == len(t1) and jbits(m)[3] == 4
           and jbits(m) == portbits(m) and m.ram[0xDD00] & 3 == 3 and m.z.memory[0xCD00] & 3 == 3,
@@ -2683,7 +2704,7 @@ def main():
     check("the boot file on a JiffyDOS drive: ZX64 and both monitor files by JiffyDOS, said on the "
           "screen; zx64 starts, and the first F5 needs no disk",
           said == "LOADING ZX64/LOADING ZX64MON/LOADING ZX64MON2/" and m.iec.sent == len(body) + len(mon) + len(mon2)
-          and m.drive.opens == opens and m.mscreen()[0].startswith("ZX64MON"),
+          and m.drive.opens == opens and m.mscreen()[0].startswith("#ZX64MON"),
           f"{said!r}, {m.iec.sent} bytes by JiffyDOS, F5 {m.drive.opens - opens} opens, {m.mscreen()[0]!r}")
     m = stubboot(False, every)
     said = m.printed.replace("\r", "/")
@@ -2691,7 +2712,7 @@ def main():
     m.tap("F5")
     check("the boot file on a plain drive: ZX64 the kernal's way, the monitor left for F5",
           said == "LOADING ZX64/" and m.iec.sent == 0 and m.drive.opens == opens + 2
-          and m.mscreen()[0].startswith("ZX64MON"), f"{said!r}, F5 {m.drive.opens - opens} opens")
+          and m.mscreen()[0].startswith("#ZX64MON"), f"{said!r}, F5 {m.drive.opens - opens} opens")
     m = Machine(int_wired=True, prg=stub, jiffy=True)
     m.cpu.sp = 0xF6
     m.call_6510(2061)

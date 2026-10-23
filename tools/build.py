@@ -120,7 +120,7 @@ MATRIX = [
     ["POUND", "*", ";", "HOME", "RSHIFT", "=", "UPARROW", "/"],
     ["1", "LEFTARROW", "CTRL", "2", "SPACE", "C=", "Q", "RUNSTOP"],
 ]
-SPECIAL = {"DEL": (20, 148), "RETURN": (13, 13), "CRSRRIGHT": (29, 157), "CRSRDOWN": (17, 145),
+SPECIAL = {"DEL": (20, 148), "RETURN": (13, 141), "CRSRRIGHT": (29, 157), "CRSRDOWN": (17, 145),
            "F5": (135, 135), "HOME": (19, 147), "SPACE": (32, 32), "RUNSTOP": (3, 3),
            "UPARROW": (0x5E, 0x5E), "LEFTARROW": (0x5F, 0x5F)}
 SHIFTED = dict(zip("1234567890:;,./", "!\"#$%&'() []<>?"))

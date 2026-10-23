@@ -6,7 +6,7 @@
 - [How it works](#how-it-works)
 - [Getting started](#getting-started)
 - [Using the ZX81](#using-the-zx81)
-- [Games](#games)
+- [The games](#the-games)
 - [The monitor](#the-monitor)
 - [The test programs](#the-test-programs)
 - [Troubleshooting](#troubleshooting)
@@ -256,10 +256,9 @@ open locally: `docs/keyboard.html`.
   another version of zx64, the ROM stays as it is and the top row says
   so: `ROM NOT RELOADED: NO ZX64` or `OTHER ZX64`.
 
-## Games
+## The games
 
-Yes, games. `LOAD "MAZOGS"` and off you go, as from tape, but with a
-bar that fills while it loads:
+Yes, games. `LOAD "MAZOGS"`, watch the bar fill, and off you go:
 
 <p align="center">
   <img src="img/loading-bar.gif" width="80%" alt="The top row while LOAD MAZOGS runs: LOADING MAZOGS, the bar filling in black, a spinner turning at the right">
@@ -271,25 +270,24 @@ bar that fills while it loads:
   <img src="img/shot-fungaloids.png" width="32%" alt="Fungaloids's title page, amber">
 </p>
 
-Played on the C64: Mazogs, BoulderL, 3D Monster Maze, Fungaloids, 1K ZX
-Chess, Tetris, Tetris 1K and Mine81. Out of reach: hi-res and WRX
-graphics, and anything else that changes how the ZX81 draws its
+Most games should just work: those that draw with the ZX81's own
+characters and block graphics, as nearly all do. Every one tried so far plays,
+from Mazogs and 3D Monster Maze to 1K ZX Chess. Out of reach: hi-res and
+WRX graphics, and anything else that changes how the ZX81 draws its
 picture.
 
-Any `.p` file loads from any disk in the drive zx64 booted from: copy
-its bytes into a PRG file (for example
-`c1541 games.d64 -write mazogs.p mazogs`). Or put it in `games/` before
-`make`: it goes on zx64's disk, and `tools/pcheck.py` warns if it uses
-something zx64 can't do, such as add-on hardware or hi-res. `SAVE
-"NAME"` saves to the same disk.
+Put your `.p` files in `games/` and run `make`: they go on zx64's disk,
+and `tools/pcheck.py` tells you if one uses something zx64 can't do,
+such as add-on hardware or hi-res. Then `LOAD "NAME"`. `SAVE "NAME"`
+saves to the same disk.
 
 ### The joystick
 
-A joystick in port 2 gives ZX81 keys. At the start they are the Sinclair
-cursor keys, the most common: 7 6 5 8 for up, down, left and right, 0 for
-fire. ZX81 games read the keyboard, and each picks its own keys, so you
-can teach zx64 a game's own. F3 then switches between the two layouts,
-each shown on the top row as its keys: `U7 D6 L5 R8 F0`.
+A joystick in port 2 maps to ZX81 keys. At the start they are the keys
+with the arrows on them, the most common: 7 6 5 8 for up, down, left and
+right, 0 for fire. ZX81 games read the keyboard, and each picks its own
+keys, so you can teach zx64 a game's own. F3 then switches between the
+two layouts, each shown on the top row as its keys: `U7 D6 L5 R8 F0`.
 
 **Your own keys:** hold F3 for a second. The program stops where it is
 and the top row asks for each key in turn, a `?` at the one it wants:
@@ -297,12 +295,9 @@ and the top row asks for each key in turn, a `?` at the one it wants:
 key, F5 gives up and keeps the layout as it was. After the fire key the
 program carries on with your layout, which stays until you switch off.
 
-On a diagonal, games that read keys through the ROM (`INKEY$`, most
-BASIC games) get the direction pressed last: the ROM takes two keys at
-once as none. Games that read the keyboard themselves get both.
-
-In FAST mode F3 still switches the layouts, but a hold doesn't stop the
-program to ask for keys.
+On a diagonal, BASIC games (`INKEY$`) see the direction pressed last;
+games that read the keyboard themselves see both. In FAST mode, holding
+F3 doesn't teach keys: F3 only switches.
 
 ## The monitor
 
@@ -324,7 +319,9 @@ learn.
   <img src="img/shot-mon-mazogs.png" width="70%" alt="The monitor after F5 in Mazogs: the registers, and D at the game's PC">
 </p>
 
-The screen editor works as the C64's. HOME goes to the top row,
+The screen editor works as the C64's. The monitor's headings and
+messages start with `#` (an error is `#?`): RETURN on such a line does
+nothing, so moving about the screen is safe. HOME goes to the top row,
 CTRL+HOME to the bottom one. A memory line from `M` or a
 disassembly line from `D` can be edited in place and entered again; on
 an `M` line, the hex or the characters (`PRINT` to `PRONT`). The
@@ -362,15 +359,14 @@ mixed with the code can make that come out differently.
     Z n              line 1 a REM of n bytes, for code at 16514
     ?                help
 
-The monitor comes with the boot from a JiffyDOS drive; otherwise the
-first F5 loads it (about 8K). It works
-wherever zx64 reads the keyboard: always in SLOW mode, and in FAST mode
-at the prompt and between BASIC statements. There's no NMI, so FAST
+F5 works wherever zx64 reads the keyboard: always in SLOW mode, and in
+FAST mode at the prompt and between BASIC statements. There's no NMI, so FAST
 machine code that never reads the keyboard can't be stopped.
 
 Nothing is protected: the ROM, zx64 and the C64's I/O are all memory, and
-the monitor changes whatever you tell it to. Only the disk commands
-refuse the 6510's page and the I/O chips.
+the monitor changes whatever you tell it to. `:C020 02` makes the
+border red, from the Z80 (leaving the monitor puts the colours back). Only the disk commands refuse the 6510's page and the I/O
+chips.
 
 ### Machine code in a REM line
 
@@ -477,25 +473,15 @@ instructions and needs no end mark:
 `$000B` is the length, 11. The `JP` lets the ROM's routine return to
 BASIC itself.
 
-The monitor can call the ROM without BASIC: a `CALL`, a breakpoint on
-the instruction after it, and the registers set by hand. F5 at the
-prompt, then
+Or straight into the Z80's registers, without BASIC at all. F5, then
 
-    :7000 'HELLO WORLD
-    A 7010 CALL $0B6B
-    B 7013
+    A 7000 ADD HL,DE
     R
 
-On the `;` line, note the PC (where F5 stopped the ZX81), type `7010`
-over it, `000B` over BC and `7000` over DE, and RETURN. `G`: the monitor
-opens again at `7013`, DE just past the text and BC counted down to
-`FFFF`. The text is where the ZX81 prints next: from the editor, after
-the report on the bottom line. Then `B 7013` to take the breakpoint off,
-the old PC back on the `;` line, and `X`: the editor goes on as it was.
-
-`G 0B6B` alone would print too, but the routine's `RET` then goes back
-into whatever F5 stopped, past the end of it: from the editor, the ZX81
-no longer takes keys.
+On the `;` line, note the PC (where F5 stopped the ZX81), type `7000`
+over it, `4321` over DE and `1234` over HL, and RETURN. `S` runs that
+one instruction: HL is `5555`. Then delete the `S` offered, put the old
+PC back on the `;` line, and `X`: the ZX81 goes on as it was.
 
 ### Reading the ROM
 
@@ -503,7 +489,7 @@ The ROM is RAM here, readable and writable like the rest. `D` shows
 zx64's patches in place:
 
 <p align="center">
-  <img src="img/shot-mon-rom.png" width="70%" alt="D 0000: five NOPs and JP $03CB; D 0038: JP $2000; D 0277: CALL $2154, JP $0229">
+  <img src="img/shot-mon-rom.png" width="70%" alt="D 0000: five NOPs and JP $03CB; D 0038: JP $2000; D 0277: CALL $2190, JP $0229">
 </p>
 
 - `0038`, the ZX81's INT, is `JP $2000`: zx64's raster interrupt.
@@ -563,14 +549,14 @@ and `INC A` / `JR Z` finds it. `H 7000 7FFF 'LAZY` finds the text again.
 code in its `REM` lines. So a program can be loaded to work on in the
 monitor:
 
-    L "HELLO"                LOADED 4009-xxxx; D 4082 shows its code
+    L "HELLO"                #LOADED 4009-xxxx; D 4082 shows its code
     W "HELLO"                saved again, changes and all
 
 After `L`, leaving the monitor (`X`, `G` or F5) goes on as `LOAD` does:
 what was running is gone, a program saved from a program line runs, and
 any other stops at the K cursor with report 0. `L` refuses a file that
-isn't a program (`? NOT A PROGRAM`, as `LOAD` gives report D) or that
-doesn't fit (`? TOO BIG`, report 4), before anything is written.
+isn't a program (`#? NOT A PROGRAM`, as `LOAD` gives report D) or that
+doesn't fit (`#? TOO BIG`, report 4), before anything is written.
 
 With addresses they are for memory. `W "NAME" s e` writes s-e as a PRG
 with the C64's load address, so `LOAD "NAME",8,1` on a plain C64 puts it

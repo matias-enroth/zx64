@@ -46,7 +46,7 @@ On the C64: `LOAD "ZX81",8`, `RUN`. Then `LOAD "MAZOGS"`, as from tape.
 - `tools/pcheck.py`: warns about games that won't work, as they go on
   the disk.
 - `make test`: both CPUs in emulators, with the real hardware's quirks
-  modelled; 165 checks.
+  modelled; 169 checks.
 
 Not possible: hi-res, WRX and other display tricks.
 

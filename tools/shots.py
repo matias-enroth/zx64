@@ -203,12 +203,15 @@ def sc_games():
 
 def sc_monitor():
     """The monitor: F5 in Mazogs; the ROM's start and its patched INT."""
-    m = machine()
-    m.boot()
-    load(m, "MAZOGS", 300)
-    m.tap("F5")
-    m.run(60)
-    pc = m.mscreen()[2][1:5]
+    for wait in range(300, 340, 3):                      # F5 when it stops the game in its
+        m = machine()                                    # own code, not in the ROM's
+        m.boot()
+        load(m, "MAZOGS", wait)
+        m.tap("F5")
+        m.run(60)
+        pc = m.mscreen()[2][1:5]
+        if int(pc, 16) >= 0x4000:
+            break
     mon(m, f"D {pc}")
     shot(m, "mon-mazogs")
     mon(m, "D 0000 0008", "D 0038 003A", "D 0277 027D")
