@@ -275,11 +275,10 @@ saves to the same disk.
 
 ### The joystick
 
-A joystick in port 2 maps to ZX81 keys. At the start they are the keys
-with the arrows on them, the most common: 7 6 5 8 for up, down, left and
-right, 0 for fire. ZX81 games read the keyboard, and each picks its own
-keys, so you can teach zx64 a game's own. F3 then switches between the
-two layouts, each shown on the top row as its keys: `U7 D6 L5 R8 F0`.
+A joystick in port 2 maps to ZX81 keys: at the start the ZX81's cursor
+keys, 7 6 5 8 for up, down, left and right, and 0 for fire. A game that
+uses other keys can be taught them; F3 then switches between the two
+layouts, each shown on the top row as its keys: `U7 D6 L5 R8 F0`.
 
 **Your own keys:** hold F3 for a second. The program stops where it is
 and the top row asks for each key in turn, a `?` at the one it wants:
