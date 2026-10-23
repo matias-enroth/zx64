@@ -191,6 +191,7 @@ Seen on the C64 with 1.1:
       F7 alone still a reset
 - [x] The manual's monitor examples: `ADD HL,DE` set up on the `;` line
       and stepped with `S` (HL `5555`), and `:C020 02` (a red border)
+- [x] SHIFT+RETURN in the monitor: the next line, nothing run
 
 Not yet tried there:
 

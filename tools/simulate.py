@@ -1807,7 +1807,7 @@ def main():
     check("F5: zx64mon loaded to $3000, its own screen (VIC bank 0, $0400, 40x25), the registers",
           m.drive.opens == opens + 2 and bytes(m.z.memory[0x3000:mlb["kmods"]]) == mon[2:mlb["kmods"] - 0x3000 + 2]
           and m.z.memory[0xC018] == 0x14 and m.z.memory[0xCD00] & 3 == 3
-          and scr[0].startswith("#ZX64MON 1.0") and scr[2].startswith(";") and scr[4].startswith("'"),
+          and scr[0].startswith("#ZX64MON 1.1") and scr[2].startswith(";") and scr[4].startswith("'"),
           f"{scr[:5]}")
     f0, d0 = m.frames, m.peek16(mlb["nframes"])
     m.run(100)

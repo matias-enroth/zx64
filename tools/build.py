@@ -146,7 +146,7 @@ def monkeys_inc():
 
 
 # zx64's version: on the top row as it starts, and in the monitor.
-VERSION = "1.0"
+VERSION = "1.1"
 
 # The settings' messages, shown on the top row: the text, then the key.
 # msg_1k, msg_16k and msg_32k must follow each other (F8 counts on it), and
