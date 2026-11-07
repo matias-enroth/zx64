@@ -35,6 +35,7 @@ except ImportError:
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(ROOT, "tools"))
 from build import KEYMAP, MATRIX, SHIFTED, zx2pet  # noqa: E402
+import build  # noqa: E402
 
 ZX = ' ??????????"£$:?()><=+-*/;,.0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ'
 FRAME_T = 2 * 19656          # Z80 T-states in a PAL frame (VICE: 2 per cycle)
@@ -69,11 +70,60 @@ MKEY.update({ch: [MPOS[ch]] for ch in MPOS if len(ch) == 1})
 MKEY.update({s: [MPOS["LSHIFT"], MPOS[k]] for k, s in SHIFTED.items() if s != " "})
 MSCR = 0xF400                # the monitor's screen, as the Z80 sees it (C64 $0400)
 
+# The monitor's help (?), one text for zx64, zx128 and zx128vic: each
+# command, then its words from column 13 (mon.asm's tab byte). V's line is
+# the C128 builds' only.
+# sim128.py and sim128vic.py read it from here.
+MON_HELP = (("M S [E]", "MEMORY"), ("D S [E]", "DISASSEMBLE"), ("A A TEXT", "ASSEMBLE: A 4082 RET"),
+            ("B [A]", "BREAKPOINT ON/OFF"), ("S", "STEP (RETURN: AGAIN)"), ("G [A]", "GO ON (X: THE SAME)"),
+            ("R", "REGISTERS"), ("V", "SYSTEM VARIABLES"), (": A B..", "STORE: : 4082 3E 01"),
+            ("F S E B", "FILL"), ("T S E D", "COPY"), ("C S E D", "COMPARE"), ("H S E B..", "HUNT: H 0 1FFF 'HELLO"),
+            ("= N", "HEX, DEC, BIN: = $FF"), ("Z N", "REM OF N BYTES IN LINE 1"), ("$", "DIRECTORY"),
+            ('L "F" [A]', "LOAD (FILE TO A)"), ('W "F" [S E]', "SAVE (S-E TO FILE)"),
+            ("@[CMD]", "DRIVE STATUS, COMMAND"))
+
+
+def mon_help(c128):
+    """The help's rows as the screen shows them (the tab expanded): with V's
+    line for the C128 builds (c128), without for zx64."""
+    return [f"{c:<13}{d}" for c, d in MON_HELP if c128 or c != "V"]
+
 KERNAL = {0xFFBD: "setnam", 0xFFBA: "setlfs", 0xFFC0: "open", 0xFFC3: "close",
           0xFFC6: "chkin", 0xFFC9: "chkout", 0xFFCC: "clrchn", 0xFFCF: "chrin",
           0xFFD2: "chrout", 0xFFB7: "readst", 0xFF81: "init", 0xFF84: "init", 0xFF8A: "init",
           0xFF96: "tksa", 0xFFAB: "untlk"}
 CALL_TRAP = 0xFFF0           # where call_6510's routines return to
+
+
+def porta_read(m):
+    """CIA 1 port A as read: what was written, the stick's lines pulled
+    low; wrong now and then (m.cia_glitch), as port B is. m needs pa, joy,
+    ciareads and cia_glitch."""
+    m.ciareads += 1
+    if m.cia_glitch and m.ciareads % 211 == 0:
+        return 0xD0
+    return m.pa & ~sum(1 << STICK[d] for d in m.joy) & 0xFF
+
+
+def matrix_read(m, extra=()):
+    """CIA 1 port B: the rows with a key down in a selected column. m needs
+    pa, joy, keys (the keys down as (column, row)), ciareads and cia_glitch;
+    extra: more selected columns (the C128's, through $D02F)."""
+    m.ciareads += 1
+    if m.cia_glitch and m.ciareads % 211 == 0:
+        return 0xD0                              # as seen on hardware: now and then one
+    cols = {c for c in range(8) if not (m.pa >> c) & 1}   # read comes back wrong
+    cols |= {STICK[d] for d in m.joy}            # the stick pulls column lines low too
+    cols |= set(extra)
+    rows, grew = set(), True                     # no diodes: a row a key connects to
+    while grew:                                  # a selected column, through any path
+        grew = False                             # of keys down (three corners of a
+        for col, row in m.keys:                  # rectangle show the fourth)
+            if (col in cols) != (row in rows):
+                cols.add(col)
+                rows.add(row)
+                grew = True
+    return 0xFF & ~sum(1 << r for r in rows)
 
 
 class Drive:
@@ -253,6 +303,7 @@ class Machine:
     def __init__(self, int_wired=True, prg=None, jiffy=False):
         self.int_wired = int_wired
         self.ram = bytearray(0x10000)            # C64 memory (the 6510's view)
+        self.ram[0x00], self.ram[0x01] = 0x2F, 0x37   # the 6510's port as RUN leaves it
         self.mem = ObservableMemory(subject=self.ram)
         self.cpu = MPU(memory=self.mem)
         self.z = z80.Z80Machine()
@@ -308,7 +359,7 @@ class Machine:
             z.mark_addrs(a, 1, z.WRITE_MARK)
         # The cartridge decodes neither IORQ nor MREQ: IN and OUT are memory
         # accesses at the 16-bit port address. Logged, as nothing in the
-        # ROM or zx64 should do them any more.
+        # ROM or zx64 should do them.
         self.io = []
         z.set_input_callback(self._z80_in)
         z.set_output_callback(self._z80_out)
@@ -330,20 +381,7 @@ class Machine:
         return v
 
     def _kbd(self):
-        self.ciareads += 1
-        if self.cia_glitch and self.ciareads % 211 == 0:
-            return 0xD0                          # as seen on hardware: now and then one
-        cols = {c for c in range(8) if not (self.pa >> c) & 1}   # read comes back wrong
-        cols |= {STICK[d] for d in self.joy}     # the stick pulls column lines low too
-        rows, grew = set(), True                 # no diodes: a row a key connects to
-        while grew:                              # a selected column, through any path
-            grew = False                         # of keys down (three corners of a
-            for col, row in self.keys:           # rectangle show the fourth)
-                if (col in cols) != (row in rows):
-                    cols.add(col)
-                    rows.add(row)
-                    grew = True
-        return 0xFF & ~sum(1 << r for r in rows)
+        return matrix_read(self)
 
     def line(self):
         """The raster line the VIC is on, roughly: 250 as a frame starts here."""
@@ -352,16 +390,13 @@ class Machine:
     def _z80_read(self, a):
         if 0xC800 <= a < 0xCC00:                 # colour RAM: 4 bits, the rest the bus's;
             self.colreads += 1                   # now and then wrong, as the hardware's
-            if self.cia_glitch and self.colreads % 97 == 0:   # I/O reads can be (seen:
-                return 0xD0                      # the monitor's colours, 2026-10-15)
+            if self.cia_glitch and self.colreads % 97 == 0:   # I/O reads can be (seen in
+                return 0xD0                      # the monitor's colours)
             return self.z.memory[a] & 0x0F | 0xF0
         if a == 0xCC01:
             return self._kbd()
         if a == 0xCC00:                          # port A: what was written, the
-            self.ciareads += 1                   # stick's lines pulled low (and
-            if self.cia_glitch and self.ciareads % 211 == 0:   # wrong now and then, as
-                return 0xD0                      # port B is)
-            return self.pa & ~sum(1 << STICK[d] for d in self.joy) & 0xFF
+            return porta_read(self)              # stick's lines pulled low
         if a == 0xC019:
             return self._d019()
         if a == 0xC011:                          # bit 7 reads as the line's bit 8,
@@ -425,6 +460,9 @@ class Machine:
     def step_6510(self):
         cpu = self.cpu
         if cpu.pc in KERNAL:
+            if not self.ram[0x01] & 2:             # HIRAM: the kernal switched out,
+                raise AssertionError(               # so the real one runs RAM there
+                    f"the kernal's {KERNAL[cpu.pc]} called with $01 = ${self.ram[0x01]:02X} (kernal out)")
             getattr(self, "k_" + KERNAL[cpu.pc])()
             lo = self.ram[0x100 + ((cpu.sp + 1) & 0xFF)]
             hi = self.ram[0x100 + ((cpu.sp + 2) & 0xFF)]
@@ -529,6 +567,22 @@ class Machine:
         z.ticks_to_stop = ticks
         z.run()
         self.t += ticks - z.ticks_to_stop
+        self._frame_irq()
+
+    def step1(self):
+        """One instruction, with its own T-states (step(1) counts 1: the z80
+        package's ticks_to_stop stops at 0), then the frame and the IRQ as
+        step's: an IRQ is taken after the instruction it comes in, as the
+        Z80 takes it, not at the end of a slice."""
+        z = self.z
+        ft = z.frame_tick
+        z.ticks_to_stop = 1
+        z.run()
+        self.t += (z.frame_tick - ft) % 100_000  # (frame_tick wraps there: sim128's WRAP_T)
+        self._frame_irq()
+
+    def _frame_irq(self):
+        z = self.z
         if self.t >= self.next_frame:
             self.next_frame += FRAME_T
             self.frames += 1
@@ -669,12 +723,58 @@ def jlabels():
 
 
 failures = 0
+skipped = []
 
 
 def check(name, cond, detail=""):
     global failures
     print(f"{'ok  ' if cond else 'FAIL'} {name} {detail}")
     failures += not cond
+
+
+def game(path, name):
+    """A program from games/ (not in git: the reader's own copies), or None
+    with check name skipped."""
+    full = os.path.join(ROOT, "games", path)
+    if os.path.exists(full):
+        return open(full, "rb").read()
+    print(f"skip {name} (needs games/{path})")
+    if name not in skipped:
+        skipped.append(name)
+    return None
+
+
+def summary():
+    """The last line: all passed or how many failed, and what was skipped."""
+    s = "all passed" if not failures else f"{failures} FAILED"
+    return s + (f"; {len(skipped)} skipped: their games aren't in games/" if skipped else "")
+
+
+# The VIC's 40x25 cells round the ZX81's 32x24 picture (columns 0-3 and
+# 36-39 of rows 0-23, all of row 24), and the picture's
+FRAME_CELLS = [i for i in range(1000) if i >= 960 or i % 40 < 4 or i % 40 >= 36]
+PICTURE_CELLS = [i for i in range(960) if 4 <= i % 40 < 36]
+
+
+def framed(m):
+    """'' if the frame is as zx128vic's: its cells the solid character
+    ($80, the font's inverse space) in the border's colour, the picture's
+    cells the characters' colour, the VIC's background and border F2's
+    scheme's, and rows 1-23 of the picture the display file's (when it is
+    expanded); else what is wrong."""
+    s = m.lbl["schemes"] + 3 * m.z.memory[m.lbl["scheme"]]
+    ch, bg, bd = m.z.memory[s:s + 3]
+    scr, col = m.z.memory[SCREEN:SCREEN + 1000], m.z.memory[0xC800:0xC800 + 1000]
+    wrong = [(sum(1 for i in FRAME_CELLS if scr[i] != 0x80), "frame cells not solid"),
+             (sum(1 for i in FRAME_CELLS if col[i] & 15 != bd), f"frame cells not the border's colour {bd}"),
+             (sum(1 for i in PICTURE_CELLS if col[i] & 15 != ch), f"picture cells not the characters' {ch}"),
+             (int(m.z.memory[0xC021] & 15 != bg or m.z.memory[0xC020] & 15 != bd), "VIC colours wrong")]
+    df = m.peek16(0x400C)
+    if m.peek16(0x4010) - df == 24 * 33 + 1:
+        wrong.append((sum(1 for r in range(1, 24) if scr[40 * r + 4:40 * r + 36] != m.z.memory[df + 1 + 33 * r:
+                                                                                     df + 33 + 33 * r]),
+                      "picture rows not the display file's"))
+    return ", ".join(f"{n} {what}" for n, what in wrong if n)
 
 
 def report(m):
@@ -696,6 +796,90 @@ def enter(m, seq):
     m.type(seq + " NEWLINE")
     m.run(3)                                     # the picture lags a frame or two
     return report(m)
+
+
+# The type-ahead's key in LAST_K: keywait's kb_key (rompatch.inc)
+# puts it there, then the ROM's key wait reads it at LK_READ (LD BC,
+# (LAST_K)) and DECODEs it. An IRQ in between scans (irq_lastk): with no
+# key down it would leave $FFFF, and DECODE loops on that for ever. A key
+# from the queue at keywait's start (typed while the editor worked) is
+# handed wherever the raster is, so an IRQ can come there. Shared with
+# sim128vic.py; m is either model's machine, step one instruction of it.
+LK_READ = 0x04D3
+LK_LETTERS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+
+
+def lk_store(mem, kb_key):
+    """kb_key's LD (LAST_K),HL (after the build's kb_lkhold)."""
+    return bytes(mem[kb_key:kb_key + 16]).index(b"\x22\x25\x40") + kb_key
+
+
+def lastk_sweep(m, step, mem, store, d1, eline, frames):
+    """In 1 REM's edit line: a letter, then the IRQ forced in after each
+    instruction from kb_key's store to the ROM's read, d1active 0 (as with
+    a key from the queue: the IRQ scans). Returns (instructions in the
+    window, what went wrong or '')."""
+    want = bytearray(b"\x1d\xea")                # 1 REM
+    for k in range(64):
+        ch = LK_LETTERS[k % 26]
+        m.keys = {C64KEY[ZXKEY[ch]]}
+        for _ in range(500_000):
+            if m.z.pc == store:
+                break
+            step()
+        else:
+            return k, f"{ch}: never handed"
+        m.keys = set()
+        step()                                   # the store
+        for _ in range(k):
+            step()
+            if m.z.pc == LK_READ:
+                return k, ""                     # past the window: every place tried
+        if not m.z.iff1:
+            return k, f"{ch}: interrupts off after {k} instructions"
+        mem[d1] = 0
+        m.latch |= 1
+        m.irq()
+        want.append(0x26 + ord(ch) - ord("A"))
+        try:
+            frames(lambda: eline() == bytes(want) + b"\x7f", 50, f"{ch} in the edit line")
+        except AssertionError:
+            return k, (f"{ch}: the IRQ after {k} instructions: LAST_K ${m.z.bc:04X}, PC ${m.z.pc:04X}, "
+                       f"edit line {eline().hex()}")
+    return 64, "no end to the window"
+
+
+def lastk_bursts(m, step, mem, store, nframes, bursts, seed):
+    """Typing in bursts: two keys down at one scan (both queued), let go as
+    the first is handed; the second is handed from the queue as the ROM
+    comes back to its key wait, wherever the raster is. Returns (keys
+    handed, IRQs taken between a store and the ROM's read, the first
+    LAST_K read wrong: (burst, keys, stored, read) or None)."""
+    import random
+    rng = random.Random(seed)
+    handed = inwin = 0
+    for b in range(bursts):
+        pair = rng.sample(LK_LETTERS, 2)
+        m.keys = {C64KEY[ZXKEY[k]] for k in pair}
+        key, reads, end = None, 0, nframes() + 12
+        while nframes() < end and reads < 2:
+            pc, irqs = m.z.pc, m.irqs
+            if pc == store:
+                key, win = m.z.hl, False
+            step()
+            if pc == store:
+                m.keys = set()
+            if key is not None and pc == LK_READ:    # (an IRQ taken after it: after the read)
+                handed, inwin, reads = handed + 1, inwin + win, reads + 1
+                if m.z.bc != key:
+                    return handed, inwin, (b, pair, key, m.z.bc)
+                key = None
+            elif key is not None and m.irqs != irqs:
+                win = True
+        end = nframes() + 3                      # the editor's work for the second
+        while nframes() < end:
+            step()
+    return handed, inwin, None
 
 
 def main():
@@ -947,15 +1131,16 @@ def main():
     # ---- the whole machine, with /INT wired (as VICE has it)
     m = Machine(int_wired=True)
     m.boot(banner=True)
-    ver = re.search(r'VERSION = "([^"]+)"', open(os.path.join(ROOT, "tools", "build.py")).read()).group(1)
-    check("the version on the top row as zx64 starts", m.screen()[0].strip() == f"zx64 {ver}",
+    # (the one VERSION, zx64's, zx128's and zx128vic's; the release's number is written here on purpose)
+    check("the version on the top row as zx64 starts", m.screen()[0].strip() == "zx64 1.2",
           f"{m.screen()[0]!r}")
     m.until(lambda: not m.z.memory[lb["ovl"]], 200, "the version gone")
 
     # F2 (SHIFT+F1): the colour schemes, round; F1 alone still type-ahead
-    def colours():
-        return (set(c & 15 for c in m.z.memory[0xC800:0xC800 + 1000]), m.z.memory[0xC021] & 15,
-                m.z.memory[0xC020] & 15)
+    def colours():                               # the picture's cells, the frame's, VIC
+        col = m.z.memory[0xC800:0xC800 + 1000]
+        return (set(col[i] & 15 for i in PICTURE_CELLS), set(col[i] & 15 for i in FRAME_CELLS),
+                m.z.memory[0xC021] & 15, m.z.memory[0xC020] & 15)
     seen, kb = [], m.z.memory[lb["kbuf"]]
     for _ in range(6):
         m.keys = {C64NAMES["LSHIFT"], C64NAMES["F1"]}
@@ -963,7 +1148,8 @@ def main():
         m.keys = set()
         m.run(10)
         seen.append((colours(), m.screen()[0].split("  ")[0].strip()))
-    want = [({1}, 0, 0), ({13}, 0, 0), ({8}, 0, 0), ({0}, 13, 13), ({14}, 6, 14), ({0}, 1, 1)]
+    want = [({1}, {0}, 0, 0), ({13}, {0}, 0, 0), ({8}, {0}, 0, 0), ({0}, {13}, 13, 13), ({14}, {14}, 6, 14),
+            ({0}, {1}, 1, 1)]
     f2_ok = [c for c, _ in seen] == want and m.z.memory[lb["kbuf"]] == kb and seen[0][1] == "white on black"
     m.tap("F1", frames=10)
     check("F2 steps through 6 colour schemes and back, naming each on the top row; F1 alone is still "
@@ -1025,6 +1211,13 @@ def main():
     new(m)
     r = enter(m, "J SHIFT+P G A M E SHIFT+P")
     check('LOAD "GAME" finds GAME.P', r == "0/0" and m.peek16(0x4014) == eline, f"{r}")
+
+    v1 = bytearray(t)                            # VERSN 1, as in some TOSEC .p files: the ROM
+    v1[0] = 1                                    # never reads it, so LOAD doesn't either
+    m.drive.files[b"V1"] = bytes(v1)
+    new(m)
+    r = enter(m, "J SHIFT+P V 1 SHIFT+P")
+    check('LOAD of a .P with VERSN 1 (not 0): loaded', r == "0/0" and m.peek16(0x4014) == eline, f"{r}")
 
     r = enter(m, "J SHIFT+P N O P E SHIFT+P")
     check('LOAD "NOPE": report D', r is not None and r.startswith("D/"), f"{r}")
@@ -1217,6 +1410,27 @@ def main():
     m.keys = set()
     check("type-ahead codes each key, with and without SHIFT, as KEYBOARD does", not bad, f"wrong: {bad}")
 
+    # LAST_K from the type-ahead, until the ROM has read it (LK_READ):
+    # an IRQ there (its scan, no key down) must leave it, or DECODE loops
+    # for ever on $FFFF (zx64.asm's kb_lkhold, as zx128's)
+    def e_line64(m):
+        a = m.peek16(0x4014)
+        return bytes(m.z.memory[a:a + bytes(m.z.memory[a:a + 200]).index(0x76)])
+    m = Machine(int_wired=True)
+    m.boot()
+    store = lk_store(m.z.memory, m.lbl["kb_key"])
+    m.type("1 E")                                            # 1 REM
+    n, bad = lastk_sweep(m, m.step1, m.z.memory, store, m.lbl["d1active"], lambda: e_line64(m), m.until)
+    check("type-ahead: an IRQ after any instruction between kb_key's LAST_K and the ROM's read leaves the key",
+          n > 0 and not bad, f"{n} places; {bad or 'each key in the edit line'}")
+    m = Machine(int_wired=True)
+    m.boot()
+    m.type("1 E")
+    handed, inwin, wrong = lastk_bursts(m, m.step1, m.z.memory, store, lambda: m.frames, 60, 4)
+    check("type-ahead: typed in bursts of two keys, LAST_K as the ROM reads it is each key handed",
+          handed and not wrong, f"{handed} keys handed, {inwin} with an IRQ before the ROM's read; "
+          + (f"burst {wrong[0]} {wrong[1]}: ${wrong[2]:04X} handed, ${wrong[3]:04X} read" if wrong else "none lost"))
+
     # ---- F7 starts the ZX81 again
     m = Machine(int_wired=True)
     m.boot()
@@ -1359,6 +1573,7 @@ def main():
         m.drive.files[b"JT"] = data
         m.iec = IEC(m, jiffy=jiffy, present=present, stuck=stuck)
         m.ram[0x5000:0x5002] = b"JT"
+        m.ram[0x01] = 0x36                                  # the kernal in, as boot.asm has it
         m.call_6510(0xFFBD, a=2, x=0x00, y=0x50)            # SETNAM
         m.call_6510(0xFFBA, a=2, x=8, y=2)                  # SETLFS 2,8,2
         m.call_6510(0xFFC0)                                 # OPEN
@@ -1794,6 +2009,33 @@ def main():
     check("F5 without zx64mon on the disk: said on the top row, the ZX81 goes on",
           m.screen()[0].strip().startswith("no zx64mon") and m.z.memory[0xC018] == 0x8A and m.ready(),
           f"{m.screen()[0]!r}")
+    # zx64mon from another build (the core's addresses it calls move with
+    # every build) has the right tags, "ZM"
+    # and "M2", but another build stamp (build.py's, beside each tag: Z80
+    # $3006, $E002, the PRGs' bytes 8 and 4): F5 says so on the top row and
+    # the ZX81 goes on; nothing is taken as there, so the next F5 with this
+    # build's files loads them. Both parts foreign, then only part 2.
+    def foreign(prg, at):
+        f = bytearray(prg)
+        f[at] ^= 0x5A
+        f[at + 1] ^= 0xA5
+        return bytes(f)
+    seen = []
+    for files in ((foreign(mon, 8), foreign(mon2, 4)), (mon, foreign(mon2, 4))):
+        m.drive.files[b"ZX64MON"], m.drive.files[b"ZX64MON2"] = files
+        opens, pc = m.drive.opens, m.z.pc
+        try:
+            m.tap("F5")
+            m.run(5)
+            top = m.screen()[0].strip()
+            seen.append((m.drive.opens - opens, top.startswith("zx64mon: other zx64") and top.endswith("f5"),
+                         m.z.memory[0xC018] == 0x8A, m.ready(), top))
+            m.run(150)                           # (the message runs out)
+        except AssertionError as e:
+            seen.append(str(e).splitlines()[0])
+    check("F5 with zx64mon from another build on the disk (both parts, only part 2): not entered, said on the "
+          "top row, the ZX81 goes on",
+          [x[:4] for x in seen] == [(2, True, True, True)] * 2, f"{seen}")
     m.drive.files[b"ZX64MON"] = mon
     m.drive.files[b"ZX64MON2"] = mon2
     opens = m.drive.opens
@@ -1807,7 +2049,7 @@ def main():
     check("F5: zx64mon loaded to $3000, its own screen (VIC bank 0, $0400, 40x25), the registers",
           m.drive.opens == opens + 2 and bytes(m.z.memory[0x3000:mlb["kmods"]]) == mon[2:mlb["kmods"] - 0x3000 + 2]
           and m.z.memory[0xC018] == 0x14 and m.z.memory[0xCD00] & 3 == 3
-          and scr[0].startswith("#ZX64MON 1.1") and scr[2].startswith(";") and scr[4].startswith("'"),
+          and scr[0].startswith("#ZX64MON 1.2") and scr[2].startswith(";") and scr[4].startswith("'"),
           f"{scr[:5]}")
     f0, d0 = m.frames, m.peek16(mlb["nframes"])
     m.run(100)
@@ -2156,6 +2398,26 @@ def main():
           w_ok and l1 and l2 and l3 and l4 and d_ok and a1 == ["00, OK,00,00"]
           and a2 == ["01, FILES SCRATCHED,01,00"] and b"T1" not in m.drive.files,
           f"W {w_ok} L {l1} {l2} {l3} {l4} $ {d_ok} {scr[:2]} @ {a1!r} {a2!r}")
+    # RUN/STOP partway through $: the 6510 closes the directory on its own
+    # then, with the kernal switched in (with the kernal switched out it
+    # would run into RAM). A directory long enough to stop.
+    for i in range(30):
+        m.drive.files[b"F%d" % i] = b"\x00\x80"
+    m.mkey("HOME", "LSHIFT")
+    err = ""
+    try:
+        m.mtype("$\r", settle=2)
+        m.keys = {MPOS["RUNSTOP"]}
+        m.run(20)
+        m.keys = set()
+        m.run(60)
+        m.mtype("@\r", settle=30)
+    except AssertionError as e:
+        err = str(e).splitlines()[0]
+    scr = m.mscreen()
+    check("$ stopped with RUN/STOP: cut short, the directory closed, the drive still answers",
+          not err and not any(r.endswith("BLOCKS FREE.") for r in scr) and not m.channels
+          and last(1) == ["00, OK,00,00"], err or f"{[r for r in scr if r][-4:]} open {sorted(m.channels)}")
 
     m.mkey("HOME", "LSHIFT")
     m.mtype("D 0000 0008\r")
@@ -2170,7 +2432,7 @@ def main():
     r = enter(m, "P 2 SHIFT+K 2")
     check("? (help); X: back to the ZX81, its picture, colours and raster IRQ as they were; PRINT 2+2",
           any(r.startswith("Z N") for r in m.mscreen()) and m.z.memory[0xC018] == 0x8A
-          and m.z.memory[0xCD00] & 3 == 0 and all(c & 15 == 0 for c in m.z.memory[0xC800:0xC800 + 1000])
+          and m.z.memory[0xCD00] & 3 == 0 and m.z.memory[lb["scheme"]] == 0 and not framed(m)
           and m.z.memory[0xC011] == 0x17 and m.screen()[0] == "4" and r == "0/0",
           f"$D011 ${m.z.memory[0xC011]:02X}, {m.screen()[0]!r} {r}")
     m.keys = {C64NAMES["LSHIFT"], C64NAMES["F1"]}  # green screen, then the monitor and back
@@ -2183,9 +2445,10 @@ def main():
     m.run(10)
     m.tap("F5")
     m.mtype("X\r", settle=20)
-    green = (all(c & 15 == 13 for c in m.z.memory[0xC800:0xC800 + 1000]) and m.z.memory[0xC021] & 15 == 0
-             and m.z.memory[0xC020] & 15 == 0)
-    check("leaving the monitor puts back the colour scheme F2 chose (green screen)", green, "")
+    green = (m.z.memory[lb["scheme"]] == 2 and m.z.memory[0xC800 + 4] & 15 == 13 and m.z.memory[0xC800] & 15 == 0
+             and not framed(m))
+    check("leaving the monitor puts back the colour scheme F2 chose (green screen), the frame in the border's "
+          "colour", green, framed(m))
 
     # S: where an instruction may go next (succ), straight from the registers
     def succ(code, pc=0x7000, **regs):
@@ -2746,6 +3009,7 @@ def main():
         "210000 7E DBFE"                         # LD HL,table / LD A,(HL) / IN A,($FE)
         "0107E0 3EC5 ED79"                       # LD BC,$E007 / LD A,$C5 / OUT (C),A: ZXpand
         "3E20 D3FD"                              # LD A,$20 / OUT ($FD),A: into zx64's code
+        "3ED5 D3FD"                              # LD A,$D5 / OUT ($FD),A: its second area
         "CDBB02 D3FD"                            # CALL KEYBOARD / OUT ($FD),A: A not known
         "ED47 ED5E"                              # LD I,A / IM 2
         "C9 DBFE DF")                            # RET; data: IN-like bytes, the table
@@ -2765,6 +3029,14 @@ def main():
           has("warn", "talks to the ZXpand") and has("warn", "writes $20FD", "zx64's code")
           and has("warn", "A is not known") and has("warn", "LD I,A") and has("warn", "IM 2")
           and has("warn", "USR 8192"), "")
+    lb0 = Machine.all[0].lbl
+    rated = [(a, pcheck.area(a)[0]) for a in (0xD4FD, 0xD4FF, 0xD500, 0xD6FF, 0xD700, 0xD7FF, 0xD800)]
+    check("pcheck: zx64's second area (ZX64HI to ZX64HIEND, as zx64.lbl has them) as harmful as the core; "
+          "the monitor's buffers under it, its stack and the font above it harmless; an OUT into it ($D5FD)",
+          (getattr(pcheck, "ZX64HI", None), getattr(pcheck, "ZX64HIEND", None)) == (lb0.get("zx64hi"),
+                                                                                  lb0.get("zx64hiend"))
+          and rated == [(0xD4FD, 0), (0xD4FF, 0), (0xD500, 2), (0xD6FF, 2), (0xD700, 0), (0xD7FF, 0), (0xD800, 0)]
+          and has("warn", "writes $D5FD", "second code area"), f"{rated}")
     check("pcheck: IN-like bytes after the RET are data, not an IN; USR VAL \"16514\" followed",
           sum(1 for _, a, m in found if a is not None and m.startswith("IN")) == 4
           and has("note", "1 IN/OUT-like byte pairs outside"), "")
@@ -2808,12 +3080,316 @@ def main():
     check("no /INT: F5 stops a running program, X lets it go on, and F5 does it again", seen == [True, True],
           f"{seen}")
 
-    fell = [i for i, mm in enumerate(Machine.all) if mm.int_wired and mm.irqs and not mm.z.memory[mm.lbl["irqseen"]]]
+    # ---- zx64's second area, ZX64HI (Z80 $D500, C64 $E500: RAM under the
+    # kernal): start puts it there from behind the JiffyDOS reader in ZX64.
+    # Its code must be in place from the first frame on, after a LOAD and
+    # after F7 (the ROM read again); the monitor's stack, from MSTACK down,
+    # must stay 64 bytes clear of the area's end (ZX64HIEND)
+    zbin = open(os.path.join(ROOT, "build", "obj", "zx64.bin"), "rb").read()
+    lb = Machine.all[0].lbl
+    hi0, hiend, hilim = lb.get("zx64hi"), lb.get("hiend"), lb.get("zx64hiend")
+    hi = bytearray(zbin[lb["coreend"] - 0x2000:] if "coreend" in lb else b"")
+    if "mstamp" in lb and hi:                    # the build stamp build.py puts in: the monitor's
+        hi[lb["mstamp"] - hi0:lb["mstamp"] - hi0 + 2] = mon[8:10]
+    hi = bytes(hi)
+
+    def hi_in(m):
+        return bool(hi) and hi0 + len(hi) == hiend and bytes(m.z.memory[hi0:hiend]) == hi
+    m = Machine(int_wired=True)
+    m.boot()
+    seen = [hi_in(m)]
+    m.drive.files[b"SPEED"] = open(os.path.join(ROOT, "build", "obj", "speed.p"), "rb").read()
+    m.drive.files[b"ZX64"] = open(os.path.join(ROOT, "build", "obj", "zx64.prg"), "rb").read()
+    try:                                         # (LOAD and F7 use lstat, in the area)
+        r = enter(m, "J SHIFT+P S P E E D SHIFT+P")  # (it runs as it loads: 0/160)
+        seen.append(hi_in(m) and r == "0/160")
+        was = m.z.memory[0x0100]
+        m.z.memory[0x0100] ^= 0x55               # the ROM written over: F7 reads it again
+        opens = m.drive.opens
+        m.tap("F7", 3)
+        m.until(lambda: m.cursor() and m.ready(), 600, "the K cursor after F7")
+        seen.append(hi_in(m) and m.drive.opens == opens + 1 and m.z.memory[0x0100] == was)
+    except AssertionError as e:
+        r = str(e).splitlines()[0]
+    check("zx64's second area: its code at ZX64HI (C64 $E500) from the boot on, after a LOAD, after F7's "
+          "ROM read", seen == [True] * 3, f"{seen}, {r}, {len(hi)} bytes, ${hi0 or 0:04X}-${hiend or 0:04X}")
+
+    m = Machine(int_wired=True)                  # the monitor's deepest stack use
+    m.boot()
+    m.drive.files.update({b"ZX64MON": mon, b"ZX64MON2": mon2})
+    top = lb["mstack"]
+    low = hilim if hilim else lb["mbuf"] + 0xFE
+    m.z.memory[low:top] = b"\x5A" * (top - low)  # a canary from the area's end up
+    m.tap("F5")
+    for cmd, settle in [("D 0000 0100", 200), ("M 0000 0100", 200), ("A 7000 LD (IX+12),$34", 30),
+                        ("H 0000 1FFF CD 07", 300), ("= +65535", 20), ("?", 60), ("Z 10", 60),
+                        ("$", 300), ('W "T1" 7000 7100', 300), ('L "T1" 7400', 300), ("@S:T1", 100),
+                        (":7000 3E 01 3C 3C 32 00 71 C9", 20), ("B 7002", 20)]:
+        m.mkey("HOME", "LSHIFT")
+        m.mtype(cmd + "\r", settle=settle)
+    m.mtype("X\r", settle=20)
+    m.type("T SHIFT+NEWLINE L 2 8 6 7 2")       # RAND USR 28672: the breakpoint
+    m.keys = {C64KEY[ZXKEY["NEWLINE"]]}
+    m.run(3)
+    m.keys = set()
+    m.run(30)
+    hit = "#BREAKPOINT" in m.mscreen()
+    m.mtype("S\r", settle=20)
+    m.mkey("HOME", "LSHIFT")
+    m.mtype("G\r", settle=20)
+    m.until(m.ready, 300, "the ROM ready for a key")
+    deep = next((a for a in range(low, top) if m.z.memory[a] != 0x5A), top)
+    check("the monitor's deepest stack use (D, M, A, H, =, ?, Z, $, W, L, @, a breakpoint hit, S, G) "
+          "stays 64 bytes above the second area's end (ZX64HIEND)",
+          hilim is not None and hit and deep >= hilim + 64 and report(m) == "0/0" and hi_in(m),
+          f"{top - deep} bytes deep, down to ${deep:04X}; the area to ${hilim or 0:04X}; {hit} {report(m)}")
+
+    parts = getattr(build, "zx64_parts", None)  # build.py's stops: as built; the core a byte
+    jlen = len(open(os.path.join(ROOT, "build", "obj", "jcore.bin"), "rb").read())   # past $2E00, the
+    n = lb.get("coreend", 0x2000) - 0x2000       # area a byte past ZX64HIEND, the reader a byte
+    long = zbin[:n] + bytes(0xE01 - n) + zbin[n:]   # too long (the area past $4000)
+    stops = []
+    for sym, blob, jl in ((lb, zbin, jlen), (dict(lb, coreend=0x2E01), long, jlen),
+                          (dict(lb, hiend=(hilim or 0) + 1), zbin, jlen), (lb, zbin, 0x200 - len(hi) + 1)):
+        try:
+            parts(sym, blob, jl)
+            stops.append(None)
+        except SystemExit as e:
+            stops.append(str(e))
+        except Exception as e:
+            stops.append(f"{type(e).__name__}: {e}")
+    check("build.py stops zx64's core past $2E00, its second area past its end (ZX64HIEND) or past what "
+          "the boot file carries (to $4000, behind the JiffyDOS reader)", parts is not None and stops[0] is None
+          and "$2E00" in (stops[1] or "") and "ZX64HIEND" in (stops[2] or "") and "$4000" in (stops[3] or ""),
+          f"{stops}")
+    mok = getattr(build, "mbuf64_ok", None)      # and the monitor's buffers (MBUF to kprev + 8)
+    stops = []                                   # into the area: as built, one byte more
+    for kp in (mlb["kprev"], lb.get("zx64hi", 0) - 7):
+        try:
+            mok(dict(mlb, kprev=kp), lb)
+            stops.append(None)
+        except SystemExit as e:
+            stops.append(str(e))
+        except Exception as e:
+            stops.append(f"{type(e).__name__}: {e}")
+    check("build.py stops zx64's monitor buffers (MBUF to kprev + 8) running into the second area (ZX64HI)",
+          mok is not None and stops[0] is None and "ZX64HI" in (stops[1] or ""), f"{stops}")
+
+    # ---- the frame (as zx128vic's): with border and background apart
+    # (F2's C64 colours), a 40x25 box of background round the ZX81's 32x24
+    # picture would make the K prompt and the status row look off-centre, so
+    # the cells round it (columns 0-3 and 36-39 of rows 0-23, all of row 24)
+    # are a solid character (the 6510's boot) in the border's colour
+    # (setcol), the picture's cells the characters' colour (framed). After
+    # the boot, each scheme, F5 and back, a LOAD and a SAVE (the bar on the
+    # top row), F7 (with the ROM read again, its bar, and plain) and F8; the
+    # 6510 writes none of the frame's cells after the boot. (The model is
+    # PAL only: its frame and raster lines are PAL's, no NTSC setting.)
+    def f2(m, n=1):
+        for _ in range(n):
+            m.keys = {C64NAMES["LSHIFT"], C64NAMES["F1"]}
+            m.run(3)
+            m.keys = set()
+            m.run(10)
+
+    def fwatch(m):                               # the 6510's writes to the frame's cells
+        m.fw = []
+        m.mem.subscribe_to_write([0xE000 + i for i in FRAME_CELLS], lambda a, v: m.fw.append(a))
+    seen = []
+    for wired in (True, False):                  # (the boot, as Machine.boot)
+        m = Machine(int_wired=wired)
+        m.cpu.pc, m.cpu.sp = 2061, 0xF6
+        m.run_6510(limit=20_000_000)
+        m.until(lambda: m.z.memory[lb["ovl"]], 400, "the version on the top row")
+        black = sum(1 for i in PICTURE_CELLS[32:] if m.z.memory[SCREEN + i] == 0x80
+                    and m.z.memory[0xC800 + i] & 15 != 1)
+        m.until(lambda: m.cursor() and m.ready(), 400, "the K cursor")
+        m.until(lambda: not m.z.memory[lb["ovl"]], 200, "the version on the top row gone")
+        seen.append((black, framed(m)))
+    check("the frame after the boot (with /INT, without): solid, the border's colour; the picture's cells "
+          "the characters', with the ZX81's picture in them as they turn black (none solid black)",
+          seen == [(0, ""), (0, "")], f"{seen}")
+    seen = []
+    for _ in range(6):
+        f2(m)
+        seen.append((m.z.memory[lb["scheme"]], framed(m)))
+    check("the frame in each of F2's 6 schemes, round to the first", seen == [(i % 6, "") for i in range(1, 7)],
+          f"{seen}")
+    m = Machine(int_wired=True)
+    m.boot()
+    fwatch(m)
+    f2(m, 5)                                     # the C64's own: border 14, background 6
+    m.drive.files.update({b"ZX64MON": mon, b"ZX64MON2": mon2})
+    seen = []
+    for _ in range(2):                           # the first F5 loads the monitor (the bar)
+        m.tap("F5")
+        seen.append(m.z.memory[0xC018] == 0x14)
+        m.mtype("X\r", settle=20)
+        m.run(100)
+        seen.append(framed(m))
+    check("the frame after F5 and back (the first, which loads the monitor with the bar; a second), in the "
+          "C64's colours", seen == [True, "", True, ""] and not m.fw, f"{seen}, 6510 writes {len(m.fw)}")
+    m.drive.files[b"SPEED"] = open(os.path.join(ROOT, "build", "obj", "speed.p"), "rb").read()
+    m.drive.files[b"ZX64"] = open(os.path.join(ROOT, "build", "obj", "zx64.prg"), "rb").read()
+    seen, r = [], ""
+    try:
+        m.barlog = []
+        r = enter(m, "J SHIFT+P S P E E D SHIFT+P")  # LOAD "SPEED" (it runs as it loads: 0/160)
+        seen.append(("LOAD", r, bool(m.barlog), framed(m)))
+        new(m)
+        r = enter(m, "S SHIFT+P T SHIFT+P")       # SAVE "T"
+        seen.append(("SAVE", r, framed(m)))
+        m.z.memory[0x0100] ^= 0x55               # the ROM written over: F7 reads it again
+        m.barlog = []
+        m.tap("F7", 3)
+        m.until(lambda: m.cursor() and m.ready(), 600, "the K cursor after F7")
+        seen.append(("F7 ROM", bool(m.barlog), framed(m)))
+        for key in ("F7", "F8"):
+            m.tap(key, 3)
+            m.until(lambda: m.cursor() and m.ready(), 600, f"the K cursor after {key}")
+            seen.append((key, framed(m)))
+    except AssertionError as e:
+        r = str(e).splitlines()[0]
+    check("the frame after a LOAD and a SAVE (the bar), F7 with the ROM read again (the bar), F7, F8, in the "
+          "C64's colours; the 6510 wrote none of its cells",
+          seen == [("LOAD", "0/160", True, ""), ("SAVE", "0/0", ""), ("F7 ROM", True, ""), ("F7", ""), ("F8", "")]
+          and not m.fw, f"{seen}, {r}, 6510 writes {sorted(set(m.fw))[:4]}")
+    m = Machine(int_wired=True, jiffy=True)      # the JiffyDOS reader's LOAD
+    m.boot()
+    fwatch(m)
+    f2(m, 5)
+    m.drive.files[b"SPEED"] = open(os.path.join(ROOT, "build", "obj", "speed.p"), "rb").read()
+    r = enter(m, "J SHIFT+P S P E E D SHIFT+P")
+    check("the frame after a LOAD by the JiffyDOS reader, in the C64's colours",
+          r == "0/160" and not framed(m) and not m.fw, f"{r}, {framed(m)}, 6510 writes {len(m.fw)}")
+
+    # ---- the quiet F5, zx128's (MQUIET): the first F5 shows the title
+    # and the registers; a later one the monitor's screen as it was left,
+    # the prompt alone on the line after the last one used. On zx64 only
+    # the monitor writes its screen (C64 $0400-$07E7): F7 (the ROM read
+    # again too), F8, LOAD (the kernal's way and JiffyDOS's) and SAVE leave
+    # it as it was, so F5 after them is quiet as well. A monitor read again
+    # from the disk ("ZM" gone at $3003: a C64 reset's boot, or a program
+    # writing over it) starts afresh: a clear screen, the title.
+    def mwatch(m):                               # the 6510's writes to the monitor's screen
+        m.mw = []
+        m.mem.subscribe_to_write(range(0x0400, 0x07E8), lambda a, v: m.mw.append(a))
+
+    def later(m, act=None):
+        """Back from the monitor (the screen as left, the cursor's row), act
+        on the ZX81, F5: (whether the monitor shows that screen with only
+        the prompt at that row, the cursor after it, its rows)."""
+        left, row = m.mscreen(), m.z.memory[mlb["crow"]]
+        if act:
+            act()
+        m.run(60)
+        m.tap("F5")
+        got = m.mscreen()
+        want = left[:row] + ["."] + left[row + 1:]
+        return (got == want and m.z.memory[mlb["crow"]] == row and m.z.memory[mlb["ccol"]] == 1
+                and m.z.memory[0xC018] == 0x14), got
+
+    def f5key(m):                                # F5 at the monitor's prompt: back
+        m.tap("F5", frames=20)
+        m.run(60)
+
+    quiet = {}
+    try:
+        m = Machine(int_wired=True)
+        m.boot()
+        m.drive.files.update({b"ZX64MON": mon, b"ZX64MON2": mon2, b"SPEED": speed,
+                              b"ZX64": open(os.path.join(ROOT, "build", "obj", "zx64.prg"), "rb").read()})
+        mwatch(m)
+        printed = m.printed
+        m.tap("F5")
+        quiet["first"] = m.mscreen()
+        m.mtype("=FF\r", settle=20)
+        m.mtype("X\r", settle=20)
+        m.run(100)                               # (the first F5's message runs out)
+        quiet["X"] = later(m)
+        f5key(m)
+        quiet["F5 key"] = later(m)
+        f5key(m)
+
+        def f7():
+            m.tap("F7", 3)
+            m.until(lambda: m.cursor() and m.ready(), 600, "the K cursor after F7")
+        quiet["F7"] = later(m, f7)
+        f5key(m)
+
+        def f7rom():
+            m.z.memory[0x0100] ^= 0x55           # the ROM written over: F7 reads it again
+            m.barlog = []
+            f7()
+            quiet["rom bar"] = bool(m.barlog)
+        quiet["F7 ROM"] = later(m, f7rom)
+        f5key(m)
+
+        def f8():
+            m.tap("F8", 3)
+            m.until(lambda: m.cursor() and m.ready(), 600, "the K cursor after F8")
+        quiet["F8"] = later(m, f8)
+        f5key(m)
+        quiet["LOAD"] = later(m, lambda: quiet.setdefault("load", enter(m, "J SHIFT+P S P E E D SHIFT+P")))
+        f5key(m)
+
+        def save():
+            new(m)
+            quiet["save"] = enter(m, "S SHIFT+P T SHIFT+P")
+        quiet["SAVE"] = later(m, save)
+        quiet["6510"] = (len(m.mw), m.printed == printed)
+        m.mkey("HOME", "LSHIFT")                 # CLR, then ? on the top row
+        m.mtype("?\r", settle=40)
+        quiet["help"] = m.mscreen()
+        f5key(m)
+        m.z.memory[0x3003] = 0                   # "ZM" gone: F5 reads the monitor again
+        opens = m.drive.opens
+        m.tap("F5")
+        quiet["reload"] = (m.drive.opens - opens, m.mscreen())
+        f5key(m)
+        m = Machine(int_wired=True, jiffy=True)  # LOAD by the JiffyDOS reader
+        m.boot()
+        m.drive.files.update({b"ZX64MON": mon, b"ZX64MON2": mon2, b"SPEED": speed})
+        mwatch(m)
+        m.tap("F5")
+        m.mtype("X\r", settle=20)
+        m.run(100)
+        quiet["Jiffy LOAD"] = later(m, lambda: quiet.setdefault("jload", enter(m, "J SHIFT+P S P E E D SHIFT+P")))
+        quiet["Jiffy 6510"] = len(m.mw)
+    except AssertionError as e:
+        quiet["error"] = str(e).splitlines()[0]
+    first = quiet.get("first", [""] * 25)
+    title = first[0].startswith("#ZX64MON 1.2") and first[1].startswith("#PC") and first[3].startswith("#AF'")
+    steps = ("X", "F5 key", "F7", "F7 ROM", "F8", "LOAD", "SAVE", "Jiffy LOAD")
+    bad = {k: quiet[k][1] for k in steps if k in quiet and not quiet[k][0]}
+    titles = {k: sum(r.startswith("#ZX64MON") for r in quiet[k][1]) for k in steps if k in quiet}
+    check("the quiet F5: the first F5 the title and the registers; a later one the screen as it was left, the "
+          "prompt on the line after (after X, F5 at the prompt, F7, F7 reading the ROM again, F8, LOAD, SAVE, "
+          "a LOAD by the JiffyDOS reader); the 6510 wrote nothing of the monitor's screen",
+          "error" not in quiet and title and not bad and len(titles) == len(steps)
+          and set(titles.values()) == {1} and quiet["6510"] == (0, True) and quiet["Jiffy 6510"] == 0
+          and quiet["load"] == "0/160" and quiet["jload"] == "0/160" and quiet["save"] == "0/0"
+          and quiet["rom bar"],
+          f"{quiet.get('error', '')} first {first[:2]}; wrong {list(bad)} {list(bad.values())[:1]}; title lines "
+          f"{titles}; 6510 {quiet.get('6510')} {quiet.get('Jiffy 6510')}; LOAD {quiet.get('load')} "
+          f"{quiet.get('jload')}, SAVE {quiet.get('save')}, the ROM's bar {quiet.get('rom bar')}")
+    h = quiet.get("help", [""] * 25)
+    want = ["?", f"#ZX64MON {build.VERSION}   ? HELP   X OR F5: BACK"] + mon_help(False) + ["."]
+    check("? (help): the title, then the C128 builds' help lines (the shared text, its tab to column 13; no "
+          "V on zx64), the prompt", h[:len(want)] == want and not any(h[len(want):]),
+          f"{[r for r in h if r][:3]} ... {len([r for r in h if r])} rows; first wrong "
+          f"{next(((i, a, b) for i, (a, b) in enumerate(zip(h, want)) if a != b), None)}")
+    n, rows = quiet.get("reload", (0, [""] * 25))
+    check("F5 with the monitor read again from the disk ('ZM' gone): a clear screen, the title and the "
+          "registers", n == 2 and rows[0].startswith("#ZX64MON") and rows[1].startswith("#PC")
+          and rows[5] == "." and not any(rows[6:]), f"{n} opens, {rows[:7]}")
+
+    fell =[i for i, mm in enumerate(Machine.all) if mm.int_wired and mm.irqs and not mm.z.memory[mm.lbl["irqseen"]]]
     check("with /INT, the key wait never gave up on the IRQ in all of the above", not fell, f"{fell}")
     io = [x for mm in Machine.all for x in mm.io]
     check("no IN or OUT from the ROM or zx64 in all of the above", not io, f"{io[:4]}")
 
-    print(f"\n{'all passed' if not failures else f'{failures} FAILED'}")
+    print(f"\n{summary()}")
     sys.exit(1 if failures else 0)
 
 

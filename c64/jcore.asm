@@ -10,7 +10,7 @@
 ; CHRIN as before.
 ;
 ; The protocol, worked out from sd2iec's source and SJLOAD's (read, not
-; copied), tried on an SD2IEC with c64/jtest.asm (2026-10-22):
+; copied), tried on an SD2IEC with extras/jtest/jtest.asm:
 ; - Asking: our own TALK under ATN, with a pause of ~500 us before its
 ;   last bit. A JiffyDOS drive answers by pulling DATA for ~100 us, then
 ;   talks JiffyDOS until the next ATN. The secondary address and the turn
@@ -46,7 +46,7 @@ JWAIT   = $08                   ; jget's time-out, in 0.6 s steps; jwd's level
 JSA     = $09                   ; jtalk's secondary address
 JNY     = $0a                   ; 7 less the y-scroll: jget's raster guard
 
-!ifndef JCORE { JCORE = $3e00 }  ; (c64/stub.asm and c64/jtest.asm put it elsewhere)
+!ifndef JCORE { JCORE = $3e00 }  ; (c64/stub.asm and extras/jtest/jtest.asm put it elsewhere)
 *= JCORE
 
 ; The three pieces into place; no JiffyDOS read open.

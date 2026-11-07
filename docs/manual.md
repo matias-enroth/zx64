@@ -9,6 +9,8 @@
 - [The games](#the-games)
 - [The monitor](#the-monitor)
 - [The test programs](#the-test-programs)
+- [zx128vic](#zx128vic)
+- [zx128](#zx128)
 - [Troubleshooting](#troubleshooting)
 - [The source](#the-source)
 
@@ -19,17 +21,16 @@ next to the C64's 6510 so the C64 could run CP/M, and C64 CP/M is often
 called the worst CP/M port there was: slow, short of memory, little
 software, and disks no other CP/M machine of the day could read. The
 cartridge is rare now, and notoriously picky about the C64 it's plugged
-into. The author built a few replicas of Dirk Wouters's (DL2DW) design
-and tried them on about seven C64s from his collection, breadbins and
-C64Cs alike. CP/M either wouldn't start at all or crashed after a few
-minutes.
+into. On about seven C64s, breadbins and C64Cs alike, replicas of Dirk
+Wouters's (DL2DW) design either don't start CP/M at all or crash after a
+few minutes.
 
-On a C64 Reloaded MK2, the same cards turn out to be rock solid. That is
-the machine zx64 was developed and tested on: see
+On a C64 Reloaded MK2, the same cards are rock solid. That is
+the machine zx64 is tested on: see
 [The hardware](#the-hardware).
 
-The cartridge's trick is a single register: a write to `$DE00` stops
-the 6510 and hands the whole machine, memory and I/O chips, to the Z80.
+The cartridge's trick is a single register: one write to it stops the
+6510 and hands the whole machine, memory and I/O chips, to the Z80.
 But then there is nothing. No kernal, no screen editor, no keyboard
 routine: a Z80 in front of 64K of RAM and a VIC, with no idea what to do
 with them. Unless you bring your own operating system.
@@ -39,6 +40,16 @@ written for a Z80 and almost nothing else. Most of what the ZX81's ULA
 did in hardware, a C64 can do with its VIC, its CIA and some help from
 the 6510. zx64 runs that ROM, with eleven routines patched, and the C64
 becomes a ZX81.
+
+The flop had a lucky sequel. Commodore promised that the C128 would run
+CP/M, with the very same cartridge. The story goes that the cartridge
+wouldn't work with the C128, so its designers put a Z80 on the main board
+instead. Every C128 has the cartridge's trick built in: a Z80 of its
+own, to which the 8502 hands the machine with a write to a register.
+That gives zx64 two C128 builds, with no cartridge and no wire:
+[zx128vic](#zx128vic) puts the ZX81 on the C128's 40-column screen, and
+[zx128](#zx128) puts the ZX81, a panel and the monitor side by side on
+its 80-column screen.
 
 ## How it works
 
@@ -53,7 +64,7 @@ freezes where it is until it gets the machine back.
   <img src="img/turns-flow.svg" width="100%" alt="A timeline: the 6510 boots and sets up the VIC, then hands over with $DE00; the Z80 starts the ZX81, you type LOAD MAZOGS; the 6510 loads it from disk; the Z80 runs Mazogs while the 6510 waits">
 </p>
 
-The 6510 starts things. The boot file loads `ZX64`, about 14K holding
+The 6510 starts things. The boot file, `ZX81`, loads `ZX64`, which holds
 the 6510's loader, your patched ROM and zx64, and starts it. `ZX64` sets
 up the VIC, makes a character set from the ZX81 ROM's, and hands over.
 The Z80 starts at `$0000`, like a ZX81 switched on. From then on the Z80
@@ -61,14 +72,13 @@ runs nearly all the time, and the 6510 only wakes up for the disk.
 
 The Z80 sees the C64's memory shifted by 4K: where a ZX81 expects its
 ROM, at `$0000`, it finds the C64's `$1000`. The shift is the
-cartridge's own: an adder chip adds `$1000` to every Z80 address, so
-CP/M got RAM at `$0000` while the 6510 kept its zero page, stack and
-screen. It wraps around, so the Z80 still reaches all 64K: its top 4K
-is the C64's bottom 4K. Addresses in this manual are the Z80's, as the
-monitor shows them.
+cartridge's own: it adds `$1000` to every Z80 address, so CP/M got RAM
+at `$0000` while the C64 kept its own bottom 4K. It wraps around, so the
+Z80 still reaches all 64K: its top 4K is the C64's bottom 4K. Addresses
+in this manual are the Z80's, as the monitor shows them.
 
 <p align="center">
-  <img src="img/memory-map.svg" width="80%" alt="Memory as the Z80 sees it: 0000 the ZX81 ROM, 2000 zx64, 3000 zx64mon, 4000 the ZX81's 16K, 8000 16K more in 32K mode, C000 the C64's I/O chips, D000 the VIC's screen and the ZX81 font, E000 zx64mon's second part, F000 the 6510's own page; C64 addresses are $1000 higher">
+  <img src="img/memory-map.svg" width="80%" alt="Memory as the Z80 sees it: 0000 the ZX81 ROM, 2000 zx64, 3000 zx64mon, 4000 the ZX81's 16K, 8000 16K more in 32K mode, C000 the C64's I/O chips, D000 the VIC's screen, the ZX81 font and zx64's second part, E000 zx64mon's second part, F000 the 6510's own memory, its loader and the monitor's screen; C64 addresses are $1000 higher">
 </p>
 
 ### The picture
@@ -81,11 +91,12 @@ and the screen goes blank.
 
 The C64's VIC draws a picture on its own; it only needs to be told what
 to show. So zx64 keeps the VIC's screen memory up to date instead: it
-copies the display file across at the end of every other frame, when
-the VIC signals one. The ROM never notices: it writes to its display file
-as always. The Z80 spends only the copy on the picture, which is why
-zx64 is nearly twice as fast as a real ZX81 in SLOW mode. In FAST mode
-zx64 stops copying, so the picture holds still instead of going blank.
+copies the display file across every other frame, when the VIC signals
+that it has drawn one. The ROM never notices: it writes to its display
+file as always. The Z80 spends only the copy on the picture, which is
+why zx64 is nearly twice as fast as a real ZX81 in SLOW mode. In FAST
+mode zx64 stops copying, so the picture holds still instead of going
+blank.
 
 <p align="center">
   <img src="img/picture-flow.svg" width="100%" alt="BASIC and the ROM write the display file in the ZX81's RAM; zx64 copies it 25 times a second, when the VIC signals; the VIC draws its screen memory in the ZX81's font">
@@ -123,28 +134,27 @@ as such a key can't be read.
 ### The disk
 
 The disk is the 6510's job. For `LOAD` and `SAVE` the Z80 leaves a
-command and the name in a mailbox at `$2F00` and writes `$DE00`. The
+command and the name in a mailbox and writes `$DE00`. The
 6510's loader, waiting since `RUN`, does the work, fills the bar on the
 top row, and switches back. The monitor's disk commands go the same way.
 It reads by JiffyDOS when the drive answers to it, with its own code for
-the serial bus: about 3,400 bytes a second, seven times the kernal's
-speed. Otherwise, and for writing, it uses the C64's kernal.
+the serial bus: about seven times as fast as the kernal. Otherwise, and
+for writing, it uses the C64's kernal.
 
 ### What zx64 changes in the ROM
 
-Only what touched the ZX81's hardware. Eleven places, each checked byte
-for byte by `tools/build.py` first, so another ROM is refused rather
-than broken. The rest of the ROM runs as Sinclair wrote it.
+Only what touched the ZX81's hardware: a handful of places, each
+checked by `tools/build.py` first, so another ROM is refused rather than
+broken. The rest of the ROM runs as Sinclair wrote it.
 
-- **The picture:** the ZX81's interrupt (`$0038`) becomes zx64's, which
-  copies the screen; the display routine (`$0277`) waits for it.
-- **SLOW and FAST** (`$0207`, `$02E7`, `$04CC`): interrupts on or off
-  instead of the display on or off.
-- **The keyboard** (`$02BB`) and **BREAK** (`$0F46`): read from the C64's
-  keys.
-- **LOAD and SAVE** (`$0340`, `$02F6`): the disk instead of the tape.
-- **The printer** (`$087B`): skipped. The **reset** (`$0000`): an `OUT`
-  that only made sense on the ZX81 is gone.
+- **The picture:** the ZX81's interrupt becomes zx64's, which copies the
+  screen; the display routine waits for it.
+- **SLOW and FAST:** interrupts on or off instead of the display on or
+  off.
+- **The keyboard** and **BREAK:** read from the C64's keys.
+- **LOAD and SAVE:** the disk instead of the tape.
+- **The printer:** skipped. The **reset:** an `OUT` that only made sense
+  on the ZX81 is gone.
 
 The monitor's `D` shows them in place: see [Reading the ROM](#reading-the-rom).
 
@@ -165,11 +175,10 @@ such games when they go on the disk, and F7 repairs the ROM afterwards.
 
 ### The hardware
 
-zx64 was developed on this setup:
+zx64 is tested on this setup:
 
 - [C64 Reloaded MK2](https://wiki.icomp.de/wiki/C64_reloaded_mk2)
-  (Individual Computers). Its USB serial link reads the C64's memory,
-  which helped find several of the bugs.
+  (Individual Computers). Its USB serial link reads the C64's memory.
 - DL2DW's [CP/M cartridge replica](https://codeberg.org/diwou/Commodore_CPM_Cartridge):
   schematic, Gerbers and parts list, plus one wire for `/INT`, and if you
   like an [LED](cpm-cart.md#led-while-the-z80-runs) that shows which CPU
@@ -270,7 +279,8 @@ open locally: `docs/keyboard.html`.
 
 - **Type-ahead**, on at the start: type at C64 speed.
 - **Colour schemes**: black on white, white on black, green screen,
-  amber, black on green, C64 blue.
+  amber, black on green, C64 blue. Only the ZX81's 32 by 24 characters
+  show the background colour; the rest of the screen is in the border's.
 - **Memory**: 16K, the default, as with Sinclair's RAM pack; 32K,
   RAM from `$4000` to `$BFFF`, all for BASIC; 1K, the bare ZX81.
 - **Reset**: the settings stay. If a program wrote over the ROM, it is
@@ -290,16 +300,28 @@ Yes, games. `LOAD "MAZOGS"`, watch the bar fill, and off you go:
   <img src="img/shot-fungaloids.png" width="32%" alt="Fungaloids's title page, amber">
 </p>
 
-Most games should just work: those that draw with the ZX81's own
-characters and block graphics, as nearly all do. Every one tried so far
-plays, from Mazogs and 3D Monster Maze to 1K ZX Chess. Out of reach:
-hi-res and WRX graphics, and anything else that changes how the ZX81
-draws its picture.
+Most games just work. Nearly all draw with the ZX81's own characters
+and block graphics, and those run, from Mazogs and 3D Monster Maze to 1K
+ZX Chess. What doesn't:
+
+- **Hi-res and WRX graphics**, and anything else that changes how the
+  ZX81 draws its picture: the screen shows nothing useful. A game with
+  its own character set plays, but in the ZX81's letters. Newer games,
+  written long after the ZX81's day, use such tricks more often than the
+  old ones, so expect more of them not to work.
+- **Add-on hardware**: a printer, a sound board, the ZXpand, or RAM
+  between 8K and 16K, where zx64 keeps its own code.
+- **Keys in FAST mode**: a game that reads the keyboard itself while in
+  FAST mode may not see your keys, or see keys you didn't press.
+
+A game in several parts loads the next one by its name: put all of them
+on the disk. A program that keeps its data in the variables it was saved
+with starts with `GOTO 1` rather than `RUN`, as on a ZX81: `RUN` clears
+the variables.
 
 Put your `.p` files in `games/` and run `make`: they go on zx64's disk,
-and `tools/pcheck.py` tells you if one uses something zx64 can't do,
-such as add-on hardware or hi-res. Then `LOAD "NAME"`. `SAVE "NAME"`
-saves to the same disk.
+and `tools/pcheck.py` tells you if one uses something zx64 can't do.
+Then `LOAD "NAME"`. `SAVE "NAME"` saves to the same disk.
 
 ### The joystick
 
@@ -328,6 +350,11 @@ stepping and the disk, on a 40-column screen with the C64's full
 keyboard. `X` or F5, and the program carries on as if nothing happened.
 [See it on the real machine](img/demo.mp4).
 
+The first F5 shows the monitor's title and the registers, and so does
+one that has to load the monitor from the disk again. After that, F5
+brings the monitor back as you left it, the cursor on the line under
+your last one; `R` shows the registers again, `?` the title and the help.
+
 ZX81 owners in 1981 had a membrane keyboard, a tape recorder and `POKE`.
 Here the C64 becomes a Z80 development machine: write a routine, run it
 from BASIC, stop it, step through it, fix it, save it. And since the
@@ -348,7 +375,7 @@ characters are stored as they show: a reversed one as the inverse
 character, a plain one not. RVS ON and OFF work as on the C64; RETURN
 turns it off too. A character the ZX81 hasn't got, such as `!`, is `?`.
 After RETURN the line is drawn again from memory, so it shows what was
-stored. Numbers are hex; `=` converts. RUN/STOP stops a long listing.
+stored. RUN/STOP stops a long listing.
 
 CRSR UP on the top row and CRSR DOWN on the bottom one scroll an `M` or
 `D` listing: the line before or after it comes in, and `M` or `D` alone
@@ -358,34 +385,43 @@ a `D` listing, the monitor finds the instruction before by disassembling
 from a few bytes earlier; data mixed with the code can make that come
 out differently.
 
-    M s [e]          memory, 8 bytes a line, with their ZX81 characters
-    D s [e]          disassemble; M or D alone goes on
-    A a text         assemble at a
-    : a b 'TEXT' ... store bytes and ZX81 text (M's lines too)
-    R                the registers, as ; and ' lines to edit
-    G [a]            carry on (at a); X does the same
-    B [a]            breakpoint on or off (four at most); B alone lists
-    S                one step; RETURN steps again
-    F s e b          fill
-    T s e d          transfer (overlap is fine)
-    C s e d          compare
-    H s e b b ...    hunt bytes; H s e 'TEXT hunts ZX81 characters
-    $                the disk's directory
-    L "NAME" [a]     load a program, as LOAD; with a: a file to a
-    W "NAME" [s e]   save the program, as SAVE; with s e: s-e as a PRG
-    @[cmd]           the drive's status, or a DOS command
-    = n              n in hex, decimal and binary; +n is decimal, %n binary
-    Z n              line 1 a REM of n bytes, for code at 16514
-    ?                help
+Numbers and addresses are hex; `s` and `e` are where a range starts and
+ends.
+
+| Command | What it does | Example |
+|---|---|---|
+| `M s [e]` | Shows memory, 8 bytes a line, with their ZX81 characters. `M` alone goes on. | `M 4000` |
+| `D s [e]` | Disassembles. `D` alone goes on. | `D 0038` |
+| `A a text` | Assembles one instruction at `a`, and offers the next address. | `A 4082 RET` |
+| `B [a]` | Sets a breakpoint at `a`, or takes it off again; four at most. `B` alone lists them. | `B 4089` |
+| `S` | Steps one instruction. RETURN steps again. | `S` |
+| `G [a]` | Carries on, or from `a`. `X` does the same. | `G` |
+| `R` | Shows the registers, on lines you can change. | `R` |
+| `V` | Shows the ZX81's system variables. On the C128 only. | `V` |
+| `: a b ...` | Stores bytes, and ZX81 text between `'`s. | `:4082 3E 01` |
+| `F s e b` | Fills a range with a byte. | `F 7000 70FF 00` |
+| `T s e d` | Copies a range to `d`; overlapping is fine. | `T 4000 40FF 7000` |
+| `C s e d` | Compares a range with the one at `d`. | `C 4000 40FF 7000` |
+| `H s e b ...` | Hunts for bytes, or for ZX81 text after a `'`. | `H 0 1FFF 'PRIN` |
+| `= n` | Shows a number in hex, decimal and binary. `+n` is decimal, `%n` binary. | `= +16514` |
+| `Z n` | Makes line 1 a `REM` of `n` bytes, for machine code. | `Z 17` |
+| `$` | Lists the disk's directory. | `$` |
+| `L "NAME" [a]` | Loads a program, as `LOAD`; with `a`, any file to `a`. | `L "HELLO"` |
+| `W "NAME" [s e]` | Saves the program, as `SAVE`; with `s e`, that range as a file. | `W "ROM" 0 1FFF` |
+| `@[cmd]` | Shows the drive's status, or sends it a command. | `@S:ROM` |
+| `?` | Shows the help, with examples. | `?` |
 
 F5 works wherever zx64 reads the keyboard: always in SLOW mode, and in
-FAST mode at the prompt and between BASIC statements. There's no NMI, so
-FAST machine code that never reads the keyboard can't be stopped.
+FAST mode at the prompt and between BASIC statements. Nothing can
+interrupt FAST machine code from outside, so if it never reads the
+keyboard, it can't be stopped.
 
 Nothing is protected: the ROM, zx64 and the C64's I/O are all memory, and
 the monitor changes whatever you tell it to. `:C020 02` makes the
 border red, from the Z80; leaving the monitor puts the colours back.
-Only the disk commands refuse the 6510's page and the I/O chips.
+Only the disk commands hold back: `L` won't load over the I/O chips
+(`C000`) or the 6510's own memory (`F000`), where its loader runs, and
+`W` won't save the I/O chips.
 
 ### Machine code in a REM line
 
@@ -470,6 +506,10 @@ To watch it run, set a breakpoint on the `RST $10`:
     G                on: it stops there again, A = 2A, an E
     B 4089           the breakpoint off; G, and the rest is printed
 
+<p align="center">
+  <img src="img/shot-break.png" width="70%" alt="The monitor stopped twice at the breakpoint on the RST $10 at 4089: first with A 2D, an H; after G, with A 2A, an E">
+</p>
+
 `S` steps one instruction instead; on the `RST $10` it goes into the
 ROM, at `$0010`. RETURN steps again; to go on, delete the `S` and type
 `G`. A breakpoint is a `RST $38` in place of the instruction's first
@@ -497,10 +537,16 @@ Or straight into the Z80's registers, without BASIC at all. F5, then
     A 7000 ADD HL,DE
     R
 
-On the `;` line, note the PC: it's where F5 stopped the ZX81. Type
-`7000` over it, `4321` over DE and `1234` over HL, and RETURN. `S` runs
-that one instruction: HL is `5555`. Then delete the `S` offered, put the
-old PC back on the `;` line, and `X`: the ZX81 goes on as it was.
+On the first register line, the one starting with `;`, note the PC:
+it's where F5 stopped the ZX81. Type `7000` over it, `4321` over DE and
+`1234` over HL, and RETURN. `S` runs that one instruction: HL is `5555`.
+
+<p align="center">
+  <img src="img/shot-regs.png" width="70%" alt="ADD HL,DE assembled at 7000; R; the ; line typed over with PC 7000, DE 4321 and HL 1234; S: PC 7001 and HL 5555">
+</p>
+
+Then delete the `S` offered, put the old PC back on the `;` line, and
+`X`: the ZX81 goes on as it was.
 
 ### Reading the ROM
 
@@ -511,8 +557,9 @@ zx64's patches in place:
   <img src="img/shot-mon-rom.png" width="70%" alt="D 0000: five NOPs and JP $03CB; D 0038: JP $2000; D 0277: CALL $2190, JP $0229">
 </p>
 
-- `0038`, the ZX81's INT, is `JP $2000`: zx64's raster interrupt.
-- `0277`, DISPLAY-1, calls zx64's frame wait and goes back to `$0229`.
+- `0038`, the ZX81's INT, is `JP $2000`: zx64's interrupt, once a frame.
+- `0277`, in the ROM's display routine, calls zx64's frame wait and goes
+  back to `$0229`.
 - `0000` should be `NOP NOP` and `LD BC,$7FFF`, but shows five NOPs. The
   ROM's floating-point calculator uses the first five bytes of memory as
   scratch space; on a ZX81 those writes hit ROM and vanish, here they
@@ -551,6 +598,10 @@ monitor offers the next line to go on with:
     :7000 'THE QUICK BROWN FOX JUMPS
     :7019 ' OVER THE LAZY DOG' FF
 
+<p align="center">
+  <img src="img/shot-text.png" width="70%" alt="The two : lines; M 7000 702F shows the bytes and the text beside them, ending in FF; H 7000 7FFF 'LAZY finds it at 7023">
+</p>
+
 The second line's `:7019 '` is the monitor's; type the rest after it.
 Spaces at a line's end are left out, so the space between the words
 starts the second line; or close the first with `'`. RETURN on the
@@ -559,8 +610,8 @@ offered line with nothing added ends.
 The `FF` ends the string. Not `00`: that's the ZX81's space. The ROM's
 own ways are an inverse last character, as in the keyword table, and
 `$76`, NEWLINE, which ends BASIC lines and the display file's rows.
-`$FF` isn't a character at all, and `INC A` / `JR Z` finds it. `H 7000
-7FFF 'LAZY` finds the text again.
+`$FF` isn't a character at all, and `INC A` then `RET Z` or `JR Z`
+finds it. `H 7000 7FFF 'LAZY` finds the text again.
 
 ### Disk commands
 
@@ -569,7 +620,7 @@ own ways are an inverse last character, as in the keyword table, and
 code in its `REM` lines. So a program can be loaded to work on in the
 monitor:
 
-    L "HELLO"                #LOADED 4009-xxxx; D 4082 shows its code
+    L "HELLO"                #LOADED and where; D 4082 shows its code
     W "HELLO"                saved again, changes and all
 
 After `L`, leaving the monitor with `X`, `G` or F5 goes on as `LOAD` does:
@@ -591,6 +642,10 @@ back where it was; `L "NAME" a` loads a PRG to a:
     @S:ROM                   scratch
     @R:MAZOGS.P=MAZOGS       rename
 
+<p align="center">
+  <img src="img/shot-disk.png" width="70%" alt="W and L for the HELLO program and for the ROM, loaded back to 8000; @S:ROM: 01, FILES SCRATCHED; @: 00, OK">
+</p>
+
 The text goes to the drive as it is, so an SD2IEC's own commands work
 from here too, without leaving the ZX81:
 
@@ -599,25 +654,327 @@ from here too, without leaving the ZX81:
 
 ## The test programs
 
-The d64 always has four, made from `progs/*.bas` with zx64's addresses
-filled in. Each runs as it loads.
+The disk has four, each running as it loads:
 
-- **`SPEED`** checks the setup and times 50 turns of an empty `FOR`
-  loop. PAL or NTSC; `/INT SEEN: 1` means the wire works; stray IRQs,
-  interrupts the VIC didn't raise, mean noise on the wire. zx64 takes 30
-  frames, a UK ZX81 56-58, as [The picture](#the-picture) explains. In
-  FAST mode it's the other way round: the ZX81's 3.25 MHz Z80 is about
-  twice as fast as the cartridge's, which gets about 1.8 T-states per
-  C64 cycle.
-- **`MEM`** tests every free byte: machine code in a `REM` writes a
-  pattern from each byte's address into all of them, reads them back,
-  then the same with the complement. 14,728 bytes in 16K, 31,112 in 32K.
-- **`PAUSE`** does `PAUSE 500` between GO and STOP: 10 seconds on PAL,
-  to time with a stopwatch. A check that the interrupt comes 50 times a
-  second.
-- **`FAST`** counts to 100 in FAST mode while the picture holds, prints
-  how many frames went by meanwhile, 0 as on a ZX81, then loops in FAST
-  for you to stop with SPACE or RUN/STOP: report D/230.
+- **`SPEED`** checks the setup and times an empty loop: about twice as
+  fast as a real ZX81. `/INT SEEN: 1` means the wire works; stray IRQs
+  mean noise on it.
+- **`MEM`** tests every free byte of memory.
+- **`PAUSE`** waits 10 seconds between GO and STOP (on PAL), to time
+  with a stopwatch.
+- **`FAST`** shows that the picture holds in FAST mode, then loops for
+  you to stop with SPACE or RUN/STOP.
+
+<p align="center">
+  <img src="img/shot-speed.png" width="60%" alt="SPEED's report: C64 video PAL, /INT seen 1, stray IRQs 0; 50 loops take 31 frames, where a UK ZX81 takes 56-58">
+</p>
+
+## zx128vic
+
+The ZX81 on a Commodore 128's 40-column screen. The C128 has a Z80 of
+its own, so all it takes is the disk: put it in, switch on, and the C128
+boots into a ZX81 that runs faster than the real one. It's the same ZX81
+as zx64's on the C64, with the same keys, colour schemes, joystick and
+monitor, and the C128 adds to it:
+
+- **Its own Z80,** on the C128's board, which the VIC's interrupt
+  reaches too.
+- **It starts by itself.** The disk has a C128 boot sector, so there is
+  nothing to type. Or put it in a ROM, in the C128's function ROM socket
+  or as a cartridge: switch on, and the ZX81 is there, no disk at all.
+- **The monitor is always there.** 128K leaves room for it next to the
+  ZX81, so F5 never loads anything.
+- **F7 needs no disk.** A copy of the ROM stays in the C128's other
+  64K, and F7 puts it back from there.
+- **Burst loading** from a 1571: games load about five times as fast.
+- **The keypad and the cursor keys** work, in the ZX81 and in the monitor.
+
+zx128vic works as zx128 does: see [How zx128 works](#how-zx128-works).
+Its picture is drawn as on the C64: see [The picture](#the-picture).
+
+### Getting started with zx128vic
+
+zx128vic is for the C128's 40-column screen, on a TV, or a display on
+the video socket. For the 80-column RGBI screen, use [zx128](#zx128).
+
+Build it as in [Building and booting](#building-and-booting): `make`
+builds it along with the rest, from the same ROM and games. Then start
+it one of three ways:
+
+- **From the disk:** `build/zx128vic.d64` in drive 8. Switch on, or type
+  `BOOT` in C128 BASIC.
+- **From the function ROM:** `build/zx128vic.rom` on an EPROM in the
+  C128's internal ROM socket: see [Starting from the function
+  ROM](#starting-from-the-function-rom). Switch on, and the ZX81 is ready in
+  a few seconds, with no disk at all; `LOAD` and `SAVE` use drive 8.
+  Hold CTRL while switching on for C128 BASIC.
+- **As a cartridge:** `build/zx128vic.crt` on an Ultimate, which starts
+  it as the function ROM would.
+
+zx128vic only uses the 40-column screen. The 80-column screen just says
+`zx128vic: the 40-column screen, please`.
+
+In VICE: `make vice128vic` boots the disk in `x128` with a 1571, and
+`make vice128vicrom` and `make vice128viccrt` start from the function ROM
+or the cartridge.
+
+Any drive works, a 1571 fastest. What has been seen working is in
+[testing.md](testing.md).
+
+zx128vic and zx128 are tested on this setup:
+
+- A flat PAL C128.
+- A [1541 Ultimate-II+](https://www.c64-wiki.com/wiki/1541_Ultimate-II)
+  as the disk drive and as a cartridge for the ROM builds. Its network
+  link runs tests on the C128 from another computer
+  ([ultimate.py](../extras/ultimate/)).
+- A real 1571.
+- c0pperdragon's [RF modulator replacement](https://github.com/c0pperdragon/C64-Video-Enhancement/blob/master/analog_only/README.md),
+  for a cleaner 40-column picture.
+- A [SaRuMan-VDC](https://www.protovision.games/wordpress/2020/02/28/64k-vdc-ram-upgrade-for-your-c128/):
+  the 80-column chip's memory grown to 64K.
+- A [Medusa](https://lotharek.pl/productdetail.php?id=135) upscaler,
+  which works great for this setup: both the 40- and the 80-column screen
+  on one modern monitor, an easy switch between them, and a sharp
+  picture.
+
+Other setups may work; reports are welcome.
+
+<p align="center">
+  <img src="img/setup128.jpg" width="49%" alt="A C128 with the Medusa upscaler on it and the Ultimate cartridge plugged in at the back, Mazogs on zx128's 80-column screen behind them">
+  <img src="img/inside128.jpg" width="49%" alt="Inside the C128: zx128 on an EPROM among the ROMs; in the shield the two video chips under heat spreaders, the 80-column one raised on the SaRuMan-VDC; the RF modulator's replacement board at the right">
+</p>
+
+The setup, running zx128; and inside the C128: zx128 on its EPROM, the
+SaRuMan-VDC under the 80-column chip, and the RF modulator replacement.
+
+### Using it
+
+[Using the ZX81](#using-the-zx81), [The games](#the-games), [The
+monitor](#the-monitor) and [The test programs](#the-test-programs) all
+hold, with these differences.
+
+**The keys:**
+
+<p align="center">
+  <img src="img/keyboard128.png" width="100%" alt="The C128 keyboard with the ZX81's legends: the main keys as on the C64; in the top row the four cursor keys as the ZX81's and F1, F3, F5, F7 as type-ahead and colours, joystick, monitor, reset and RAM size; the keypad's digits, . and ENTER as NEWLINE; ESC, TAB, ALT, CAPS LOCK, HELP, LINE FEED, 40/80 DISPLAY and NO SCROLL unused">
+</p>
+
+Printable overlay: [keyboard128.pdf](keyboard128.pdf). Keyboard viewer,
+to open locally: `docs/keyboard.html?c128`.
+
+**The disk.** `LOAD` and `SAVE` go through the C128's kernal, on the
+drive zx128vic started from, with the loading bar on the top row.
+
+**The monitor** has one more command, `V`: the ZX81's system variables
+that say where things are in memory, such as D_FILE, VARS and RAMTOP,
+and FRAMES. `V` only reads them; `:` changes one: `:4004 00 80` makes
+RAMTOP `$8000`.
+
+<p align="center">
+  <img src="img/shot-zx128vic-mon.png" width="70%" alt="zx128vic's monitor, light green on dark grey, after F5 in Mazogs: the registers, then V's system variables">
+</p>
+
+The monitor can't reach the C128's chips, such as the VIC: on the C128
+the Z80 only gets at them with `IN` and `OUT`, not through memory. So
+`M` and `:` only show and change RAM, and `:C020 02` doesn't make the
+border red as it does on the C64. The Z80's memory:
+
+<p align="center">
+  <img src="img/memory-map-zx128vic.svg" width="80%" alt="zx128vic's memory as the Z80 sees it: 0000 the ZX81 ROM, 2000 zx128vic, 3000 the monitor, 4000 the ZX81's 16K, 8000 16K more in 32K mode, C000 the VIC's screen, C400 the monitor's screen, C800 the ZX81 font, D000 the monitor's font, D800 zx128vic's second part, E000 shared with the 8502">
+</p>
+
+## zx128
+
+zx128 is the ZX81 on the C128's 80-column screen, with a debugger beside
+it: the build that shows off the C128. The picture is sharper than a
+ZX81 ever looked on a TV, and the ZX81 runs faster than the real one.
+Stop a game with F5, and step through its code while its picture
+changes next to the listing.
+
+The 40-column picture is easy: the VIC
+reads its screen from the computer's own memory, so zx64 and zx128vic
+just copy the ZX81's picture there. The 80-column chip, the VDC, is cut
+off from the rest of the machine. Its screen is in its own memory, which
+neither CPU can reach: every byte has to be handed to the chip one at a
+time, waiting each time until it's ready. That's the bottleneck. Copied
+that way, games would crawl. zx128 gets around it with a trick that
+isn't in Commodore's documentation: see [The picture on the
+VDC](#the-picture-on-the-vdc).
+
+zx128 takes advantage of the C128 in several ways:
+
+- **Its own Z80.** No cartridge, no wire: see [Two CPUs, one
+  MMU](#two-cpus-one-mmu).
+- **The 80-column screen.** The ZX81's picture keeps its shape, with room
+  beside it for the panel, or for the monitor.
+- **128K.** The ZX81 and the whole monitor in one half, the C128's own
+  system and a spare copy of the ZX81 ROM in the other.
+- **The boot sector and the function ROM:** nothing to type, or no disk
+  at all. See [Starting from the function ROM](#starting-from-the-function-rom).
+- **Burst loading** from a 1571: games load about five times as fast.
+- **The C128's own keys:** the keypad and the cursor keys.
+
+### Getting started with zx128
+
+zx128 is for the C128's 80-column screen, on an RGBI display or a
+converter for one. For the 40-column screen, use [zx128vic](#zx128vic).
+The 80-column chip's usual memory is enough: the SaRuMan-VDC in the
+setup zx128 is tested on isn't needed.
+
+zx128 is built and started as [zx128vic](#getting-started-with-zx128vic)
+is, from `build/zx128.d64`, `build/zx128.rom` or `build/zx128.crt`. It
+only uses the 80-column screen. The 40-column screen just says `zx128:
+the 80-column screen, please`, or stays empty with the 40/80 key down.
+
+In VICE: `make vice128`, `make vice128rom` and `make vice128crt`.
+
+### The screen
+
+<p align="center">
+  <img src="img/shot-zx128-hello.png" width="80%" alt="zx128 after 10 PRINT &quot;HELLO ZX81&quot;, 20 GOTO 10 and RUN: HELLO ZX81 down the left until the screen is full, report 5/10; on the panel the F-keys, SLOW and Z80">
+</p>
+
+The panel's bottom rows say whether the ZX81 is in SLOW or FAST mode,
+and which CPU has the machine: the Z80, or the C128's own 8502 while it
+works the disk. [Using the ZX81](#using-the-zx81) and [The
+games](#the-games) hold as on zx64, with the C128's keys as in
+[zx128vic](#using-it), and two differences:
+
+- **The colour schemes:** F2 has four of its own, white on black, C128
+  colours, C64 colours and ZX81 colours. The background colour fills
+  the whole screen.
+- **The top row's messages,** the loading bar and the joystick's keys
+  among them, are on the panel.
+
+zx128 is a little slower than zx128vic, since keeping the 80-column
+picture up to date costs the Z80 part of every frame. Both are still
+well ahead of a real ZX81.
+
+**F5** opens the monitor on the right, over the panel. The ZX81 moves to
+the left half, its characters half as wide, and is drawn again after
+every command and every step: step through a game with `S` and watch the
+picture change beside the code. `X` or F5, and the picture is back at
+full width. The monitor is as [zx128vic's](#using-it): always in memory,
+with `V`, the keypad and the cursor keys.
+[See it on the real C128](img/demo128-monitor.mp4).
+
+<p align="center">
+  <img src="img/mon128.jpg" width="70%" alt="F5 in Mazogs on the real C128, the Medusa upscaler and the Ultimate in front of the monitor: the game at half width on the left, its title now A MAZE ZX128TEST GAME; on the right the monitor's registers, V's system variables, and M 6F22 showing the screen's bytes with the new title beside them">
+  <br><sub>The title's ADVENTURE typed over in the monitor, and the game's picture shows it.</sub>
+</p>
+
+The Z80's memory, for the monitor:
+
+<p align="center">
+  <img src="img/memory-map-zx128.svg" width="80%" alt="zx128's memory as the Z80 sees it: 0000 the ZX81 ROM, 2000 zx128, 3000 the monitor, 4000 the ZX81's 16K, 8000 16K more in 32K mode, C000 the picture as the VDC has it, C400 the monitor's screen, C900 zx128's second part, E000 shared with the 8502">
+</p>
+
+### How zx128 works
+
+zx128 runs zx64's ZX81: the same ROM patches, and a few of its own; the
+same keyboard code, type-ahead, joystick and monitor. The C128 changes
+nearly everything around them.
+
+#### Two CPUs, one MMU
+
+The C128's Z80 and 8502 take turns, as the C64's 6510 and the
+cartridge's Z80 do: one hands the machine to the other with a write to
+a register, and waits until it gets it back. A handover there and back
+takes a tiny fraction of a frame.
+
+Where the cartridge simply shifts the Z80's addresses, the C128 has a
+memory manager, the MMU, which decides for both CPUs what they see: RAM,
+ROM or the chips. It has two catches:
+
+- In the C128's first 64K, the Z80 finds its own small CP/M ROM where the
+  ZX81 wants its ROM. So the ZX81 lives in the second 64K, and the 8502
+  stays in the first with the C128's kernal.
+- The MMU's setting is one for both CPUs: whatever one sets, the other
+  finds when it wakes. So both switch from a small area of memory that
+  every setting leaves in place, the top 8K, which both halves share.
+
+The VIC's interrupt reaches the Z80 as it reaches the 8502, so the ZX81
+gets its 50 interrupts a second with no wire.
+
+#### The chips by IN and OUT
+
+With all of its memory RAM, the Z80 reaches the C128's chips only by
+`IN` and `OUT`. zx64's keyboard trick works here too: a game that reads
+the keyboard with its own `IN` finds the keys where it expects them.
+All but one row, Y to P: there the C128's `IN` reads an empty corner of
+its I/O instead, as if every key in the row were held. zx128 patches the
+games it knows as they load, BoulderL among them. Other games that read
+that row themselves may act as if its keys were held.
+
+The C128's own keys, the keypad and the cursor keys, are in extra
+columns of its keyboard, which zx128 reads along with the C64's.
+
+#### The picture on the VDC
+
+The VDC's memory is out of the CPUs' reach: every byte goes in through
+one of its registers, and the chip has to be asked before each one
+whether it is ready. A full copy of the picture takes several frames.
+
+Except when the VDC has drawn a frame and is going back to the top of
+the screen for the next one, the vertical blank. Then it takes bytes
+without being asked, several times as fast. So zx128 does three things:
+
+- **It writes only what changed.** It keeps a copy of what the VDC
+  shows, compares it with the display file, and queues the differences.
+  The rows where something is likely being printed go first.
+- **It writes in the blank.** The VDC has no interrupt, so zx128 uses
+  the VIC's, aimed every frame at just before the VDC's blank. The two
+  chips' frames differ by a hair, so the aim moves a little every frame
+  to stay on it.
+- **It lets the VDC do the work.** The ROM's `CLS` and `SCROLL` are
+  patched to have the VDC clear or move the picture itself, with its own
+  block fill and block copy.
+
+Most of the time the picture costs the Z80 about a quarter of each frame.
+Even a big redraw in Mazogs is on the screen in about a tenth of a
+second.
+
+The characters come from the VDC's own memory: the ZX81's, each split
+into a left and a right half, so the picture keeps its shape; and a
+narrow set for the monitor's half-width picture and the panel's text.
+
+#### Starting from the function ROM
+
+The C128 looks for a ROM in its internal function ROM socket, and in the
+cartridge port, at every reset, and starts one it finds before the
+kernal has set anything up. zx128 doesn't quite fit in a 32K ROM, so the
+build packs it with Einar Saukas's [ZX0](../extras/zx0/), to about three
+quarters of its size. The ROM unpacks it to where the boot sector would
+have loaded it, and carries on as from the disk.
+
+The catch: the unpacked program reaches into the memory the ROM itself
+sits in. So the unpacker works in two steps, and once it no longer needs
+the lower half of the ROM, it swaps that half for RAM. The build checks
+that nothing is still to be read from there.
+
+CTRL held at the start skips the ROM: the kernal goes on into C128 BASIC
+as if it weren't there.
+
+To put zx128 or zx128vic in the C128 for good, burn `build/zx128.rom`
+or `build/zx128vic.rom` into a 27C256 EPROM with a programmer such as
+the TL866II+. It goes in the internal function ROM socket, U36 on the
+flat C128, with its notch the same way as the C128's other ROMs.
+Switched on, the ZX81 is there in seconds:
+[see it on the real C128](img/demo128.mp4).
+
+<p align="center">
+  <img src="img/eprom128.jpg" width="60%" alt="The EPROM labelled zx128 1.2 in U36, between the C128's own ROMs">
+</p>
+
+#### The disk on the C128
+
+The 8502 does the disk, as the 6510 does on the C64, but through the
+C128's kernal, which uses a 1571's fast burst mode by itself. `LOAD`
+reads the whole file in one go into the 8502's half of memory and then
+copies it across, which is faster even without burst. On zx128 the bar
+and the messages are on the panel, which says the 8502 has the machine
+meanwhile; on zx128vic, on the top row.
 
 ## Troubleshooting
 
@@ -628,8 +985,8 @@ filled in. Each runs as it loads.
 - **"NO Z80: ZX64 NEEDS THE C64 CP/M CARTRIDGE."** zx64 found no Z80:
   no cartridge, or it isn't seated.
 - **"ZX64 NOT LOADED"** after `RUN`: the disk has the boot file, `ZX81`,
-  but not `ZX64`, or there was a disk error. Put all four files of
-  `build/zx64.d64` on it: `ZX81`, `ZX64`, `zx64mon` and `zx64mon2`.
+  but not `ZX64`, or there was a disk error. Copy zx64's four
+  files from `build/zx64.d64`: `ZX81`, `ZX64`, `zx64mon` and `zx64mon2`.
 - **Report D on LOAD.** The file isn't on the drive zx64 came
   from, under that name or with `.P`. `@` in the monitor shows the
   drive's message.
@@ -641,24 +998,53 @@ filled in. Each runs as it loads.
   in the drive has no `ZX64`, or one from another version of zx64. The
   ROM stays as it is.
 - **"NO ZX64MON ON THE DISK"** on F5: the files `zx64mon` and `zx64mon2`
-  aren't on the drive zx64 booted from.
+  aren't on the drive zx64 booted from. **"ZX64MON: OTHER ZX64"**: they
+  are, but from another build of zx64, which would crash; put the ones
+  from this build's `build/zx64.d64` there.
 - **Typing in VICE gives the wrong keys.** Set VICE's keyboard mapping
   to positional.
+
+### On the C128
+
+- **"zx128: the 80-column screen, please"** on the 40-column screen, or
+  **"zx128vic: the 40-column screen, please"** on the 80-column one: the
+  40/80 key is the other way. The build runs anyway; look at the other
+  screen instead.
+- **C128 BASIC instead of the ZX81.** The disk wasn't in drive 8 at the
+  start, or CTRL was held: `BOOT` starts it from the disk.
+- **A 1571 loads as slowly as a 1541.** The C128 didn't get burst from
+  the drive. After `LOAD"$",8` in C128 BASIC, `PRINT PEEK(2588)` says
+  64 with burst and 0 without. A faulty CIA chip can cause it, and
+  swapping the two CIAs can fix it. An SD2IEC has no burst: it loads at
+  the kernal's usual speed.
+- **"ROM NOT RELOADED"** on F7: the ROM's spare copy has been changed
+  too, and the disk in the drive has no `ZX128` (`ZX128VIC`),
+  or one from another build, or gave an error. The ROM stays as it is.
+  **"ZX128 CHANGED: LOAD IT AGAIN"** (**"ZX128VIC CHANGED"**): a program
+  wrote over zx128 itself; boot it again.
+- **A game acts as if a key from Y to P were held.** It reads that row
+  itself, which the C128 can't give it: see [The chips by IN and
+  OUT](#the-chips-by-in-and-out).
 
 ## The source
 
 | Path | |
 |---|---|
 | `z80/zx64.asm` | the Z80 side: interrupts, picture, keyboard, disk via the mailbox |
-| `z80/mon.asm` | zx64mon |
+| `z80/zx128.asm`, `z80/zx128vic.asm` | the same for the C128: zx128 and zx128vic |
+| `z80/*.inc` | what they share: the keyboard, the ROM patches, the pictures, the panel |
+| `z80/mon.asm` | zx64mon, the monitor of all three |
 | `c64/boot.asm` | the 6510 side: boot, VIC setup, disk I/O |
-| `tools/build.py` | patches the ROM, assembles, builds the d64 |
+| `c128/boot128.asm` | the 8502 side of both C128 builds |
+| `c128/from.asm` | the function ROM's start: the unpacker |
+| `tools/build.py` | patches the ROM, assembles, builds the d64s and ROMs |
 | `tools/pcheck.py` | checks `.p` files for what won't work |
-| `tools/zxbasic.py` | BASIC text to `.p`, for `progs/` |
 | `tools/simulate.py` | `make test`: both CPUs in emulators |
+| `tools/sim128.py`, `tools/sim128vic.py` | the same for the C128 builds |
 | `tools/shots.py` | this manual's screenshots, from the same emulators |
 | `progs/` | the test programs |
 | `scripts/` | headless VICE, for testing on Linux |
+| `extras/` | tools that stand on their own: [memtest128](../extras/memtest128/), [jtest](../extras/jtest/), [ultimate.py](../extras/ultimate/), [zx0.py](../extras/zx0/), [zxbasic.py](../extras/zxbasic/) |
 
 More: what zx64 relies on about the cartridge, with sources, in
 [cpm-cart.md](cpm-cart.md); what has been tested, in

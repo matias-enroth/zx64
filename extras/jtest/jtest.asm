@@ -12,8 +12,6 @@
 ;   j-  the same, the screen off (no bad lines at all)
 ; "ok": the same bytes and sum as k. "jiffy no": the drive didn't answer,
 ; and the j reads went through the kernal's ACPTR after jtalk's TALK.
-; (Its first version, 2026-10-22, had its own copy of the protocol and a
-; j pass with the screen as it is, y-scroll 3: all ok on an SD2IEC.)
 ;
 ; The protocol, worked out from sd2iec's source and SJLOAD's (read, not
 ; copied):

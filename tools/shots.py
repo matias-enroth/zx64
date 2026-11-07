@@ -6,7 +6,9 @@
 Runs zx64 in tools/simulate.py's machine, types what each scene needs and
 draws the VIC's screen as it is in memory (its own character set, or the
 C64's character ROM for the monitor) into docs/img/shot-*.png, and the
-loading bar into docs/img/loading-bar.gif. Needs a build (make), the C64
+loading bar into docs/img/loading-bar.gif. The zx128 and zx128vic scenes
+do the same in tools/sim128.py's C128: zx128's VDC screen from the VDC's
+RAM, zx128vic's VIC screen from bank 1. Needs a build (make), the C64
 character ROM (VICE's chargen-901225-01.bin, found in the usual places or
 given as CHARGEN=), ffmpeg for the GIF, and the games in games/ for the
 scenes that load them.
@@ -50,11 +52,14 @@ def png(path, w, h, rows):
                            + chunk(b"IDAT", zlib.compress(raw, 9)) + chunk(b"IEND", b""))
 
 
-def draw(peek, path, rom, scale=2, row=None):
+def draw(peek, path, rom, scale=2, row=None, io=None):
     """The VIC's text screen as peek(C64 address) shows it; with row, only
-    that character row of the ZX81's 32 columns, and a margin."""
-    d011, d018 = peek(0xD011), peek(0xD018)
-    bank = (3 - (peek(0xDD00) & 3)) * 0x4000
+    that character row of the ZX81's 32 columns, and a margin. io(address):
+    the VIC's and CIA 2's registers and colour RAM, if not peek's (the
+    C128's, where the VIC's memory has other bytes at $D000-$DFFF)."""
+    io = io or peek
+    d011, d018 = io(0xD011), io(0xD018)
+    bank = (3 - (io(0xDD00) & 3)) * 0x4000
     screen = bank + (d018 >> 4) * 0x400
     chars = bank + ((d018 >> 1) & 7) * 0x800
     from_rom = bank in (0, 0x8000) and 0x1000 <= chars - bank < 0x2000
@@ -63,7 +68,7 @@ def draw(peek, path, rom, scale=2, row=None):
     rows = 25 if d011 & 8 else 24
     top = BORDER_Y + (d011 & 7) - 3            # where character row 0 starts
     win0, win1 = (BORDER_Y, BORDER_Y + 200) if rows == 25 else (BORDER_Y + 4, BORDER_Y + 196)
-    border, back = PALETTE[peek(0xD020) & 15], PALETTE[peek(0xD021) & 15]
+    border, back = PALETTE[io(0xD020) & 15], PALETTE[io(0xD021) & 15]
     w, h = 320 + 2 * BORDER_X, 200 + 2 * BORDER_Y
     ys, xs = range(h), range(w)
     if row is not None:
@@ -80,7 +85,7 @@ def draw(peek, path, rom, scale=2, row=None):
                 if 0 <= cy < 25:
                     c = peek(screen + cy * 40 + cx)
                     if glyph(c, (y - top) % 8) & (0x80 >> ((x - BORDER_X) % 8)):
-                        px = PALETTE[peek(0xD800 + cy * 40 + cx) & 15]
+                        px = PALETTE[io(0xD800 + cy * 40 + cx) & 15]
             line.extend(px * scale)
         img.extend([b"".join(bytes(p) for p in zip(*[iter(line)] * 3))] * scale)
     png(path, len(xs) * scale, len(ys) * scale, img)
@@ -100,15 +105,8 @@ class Shot(S.Machine):
                 return
             if self.on_6510 and i % 4000 == 0:
                 self.on_6510(self)
-            if cpu.pc in S.KERNAL:
-                getattr(self, "k_" + S.KERNAL[cpu.pc])()
-                lo = self.ram[0x100 + ((cpu.sp + 1) & 0xFF)]
-                hi = self.ram[0x100 + ((cpu.sp + 2) & 0xFF)]
-                cpu.sp = (cpu.sp + 2) & 0xFF
-                cpu.pc = ((hi << 8) | lo) + 1
-            else:
-                cpu.step()
-        raise AssertionError("the 6510 never handed back")
+            self.step_6510()
+        raise AssertionError(f"the 6510 never handed back (pc ${cpu.pc:04X})")
 
 
 ROM = None
@@ -218,13 +216,25 @@ def sc_monitor():
     shot(m, "mon-rom")
 
 
-def sc_asm():
-    """Z 17 makes the REM; A assembles, : the text (WORLD with RVS ON); LIST; RUN; M."""
+def in_monitor():
+    """A fresh zx64, F5 pressed at the K cursor."""
     m = machine()
     m.boot()
     m.run(5)
     m.tap("F5")
     m.run(60)
+    return m
+
+
+def clear(m):
+    """SHIFT+CLR HOME: the monitor's screen cleared, for a shot of one example."""
+    m.mkey("LSHIFT", "HOME")
+    m.run(20)
+
+
+def hello(m):
+    """The manual's hello world: Z 17 makes the REM; A assembles, : the
+    text (WORLD with RVS ON)."""
     mon(m, "Z 17", "A 4082 LD HL,$408D", "LD A,(HL)", "INC A", "RET Z", "DEC A", "RST $10", "INC HL",
         "JR $4085", "")
     m.mtype(":408D 'HELLO ")
@@ -232,6 +242,12 @@ def sc_asm():
     m.mtype("WORLD")
     m.mkey("CTRL", "0")
     m.mtype("' FF\r", settle=60)
+
+
+def sc_asm():
+    """Hello world in a REM; LIST; RUN; M."""
+    m = in_monitor()
+    hello(m)
     shot(m, "asm")
     mon(m, "X")
     m.run(30)
@@ -260,6 +276,153 @@ def sc_patch():
     shot(m, "write")
     m.tap("F7")
     m.until(lambda: m.cursor() and m.ready(), 900, "K after F7")
+
+
+def sc_break():
+    """A breakpoint on hello world's RST $10: RUN stops there with A an H,
+    G stops there again with A an E."""
+    m = in_monitor()
+    hello(m)
+    m.mtype("\r", settle=30)                                        # the offered : line ended
+    clear(m)
+    mon(m, "B 4089", "X")
+    m.run(30)
+    try:
+        S.enter(m, "R")                                             # RUN, which stops at once
+    except AssertionError:
+        pass
+    m.run(60)
+    mon(m, "G")
+    shot(m, "break")
+
+
+def sc_regs():
+    """ADD HL,DE at 7000; R; PC, DE and HL typed over on its ; line; S: HL 5555."""
+    m = in_monitor()
+    clear(m)
+    mon(m, "A 7000 ADD HL,DE", "", "R")
+    for _ in range(3):                                              # up to the ; line
+        m.mkey("RSHIFT", "CRSRDOWN")
+    m.mtype("7000")                                                 # over PC
+    for _ in range(11):
+        m.mkey("CRSRRIGHT")
+    m.mtype("4321")                                                 # over DE
+    m.mkey("CRSRRIGHT")
+    m.mtype("1234\r", settle=60)                                    # over HL
+    for _ in range(2):                                              # down to the prompt
+        m.mkey("CRSRDOWN")
+    m.mkey("CRSRRIGHT")
+    mon(m, "S")
+    shot(m, "regs")
+
+
+def sc_text():
+    """: with text over two lines, M shows it, H finds it."""
+    m = in_monitor()
+    clear(m)
+    mon(m, ":7000 'THE QUICK BROWN FOX JUMPS", " OVER THE LAZY DOG' FF", "", "M 7000 702F", "H 7000 7FFF 'LAZY")
+    shot(m, "text")
+
+
+def sc_disk():
+    """The disk commands: W and L, the program and a range; @ a command and the status."""
+    m = in_monitor()
+    hello(m)
+    m.mtype("\r", settle=30)                                        # the offered : line ended
+    clear(m)
+    mon(m, 'W "HELLO"', 'L "HELLO"', 'W "ROM" 0000 1FFF', 'L "ROM" 8000', "@S:ROM", "@")
+    shot(m, "disk")
+
+
+def sc_speed():
+    """SPEED's report: the setup, and an empty loop timed."""
+    m = machine()
+    m.boot()
+    load(m, "SPEED", 2000)
+    shot(m, "speed")
+
+
+def rgbi(c):
+    """A VDC colour (RGBI, 0-15) as an RGB triple, as a CGA monitor shows it
+    (dark yellow as brown)."""
+    if c == 12:
+        return (0xAA, 0x55, 0x00)
+    i = 0x55 if c & 1 else 0
+    return tuple((0xAA if c & bit else 0) + i for bit in (8, 4, 2))
+
+
+def draw_vdc(m, path, margin=16):
+    """The VDC's 80x25 text screen as its RAM and registers have it (R12/R13
+    the characters, R20/R21 the attributes, R28 the character sets, 16 bytes
+    a glyph, attribute bit 7 the second set, bit 6 reverse, R26 the
+    background), each line drawn twice for the screen's shape, with a margin
+    in the background's colour."""
+    v, ram = m.vdc, m.vram
+    n = len(ram)
+    scr, att, cs = v[12] << 8 | v[13], v[20] << 8 | v[21], (v[28] & 0xE0) << 8
+    bg = rgbi(v[26] & 15)
+    img = []
+    for y in range(-margin, 200 + margin):
+        line = []
+        for x in range(-margin, 640 + margin):
+            px = bg
+            if 0 <= y < 200 and 0 <= x < 640:
+                i = (y >> 3) * 80 + (x >> 3)
+                code, a = ram[(scr + i) % n], ram[(att + i) % n]
+                bits = ram[(cs + (0x1000 if a & 0x80 else 0) + code * 16 + (y & 7)) % n]
+                if a & 0x40:
+                    bits ^= 0xFF
+                if bits & 0x80 >> (x & 7):
+                    px = rgbi(a & 15)
+            line.extend(px)
+        img += [bytes(line)] * 2
+    png(path, 640 + 2 * margin, 2 * (200 + 2 * margin), img)
+    print("wrote", os.path.relpath(path, ROOT))
+
+
+def mazogs128(sim128, m, wait):
+    """Mazogs loaded into a booted C128 build, run for wait frames."""
+    sim128.load_p(m, open(os.path.join(ROOT, "games", "mazogs.p"), "rb").read())
+    m.frames(wait)
+
+
+def sc_zx128():
+    """zx128: HELLO ZX81 printed till the screen is full. (The monitor
+    beside Mazogs is a photo now, mon128.jpg.)"""
+    import sim128
+    m = sim128.zx128()                                   # a program of the reader's own
+    m.type("1 0 P SHIFT+P H E L L O SPACE Z X 8 1 SHIFT+P NEWLINE 2 0 G 1 0 NEWLINE R NEWLINE")
+    m.frames(150)
+    draw_vdc(m, os.path.join(OUT, "shot-zx128-hello.png"))
+
+
+def sc_zx128vic():
+    """zx128vic: the monitor in the C128's colours, V after F5 in Mazogs.
+    (The model has no character ROM: the C64's stands in for the C128's
+    upper case and graphics, copied to $D000 for the monitor.)"""
+    import sim128
+    saved = sim128.PRG, sim128.LBL, sim128.sym8502
+    import sim128vic                                     # (points sim128's helpers at zx128vic's build)
+    try:
+        m = sim128vic.zx128vic()
+        mazogs128(sim128, m, 300)
+        sim128.fkey(m, "F5")
+        m.frames(60)
+        sim128.mon_type(m, "V\r", settle=60)
+    finally:
+        sim128.PRG, sim128.LBL, sim128.sym8502 = saved
+
+    def io(a):
+        if a == 0xDD00:
+            return (m.cia2[0] & m.cia2[2] | ~m.cia2[2]) & 3
+        if 0xD800 <= a < 0xDC00:
+            return m.colour[a - 0xD800]
+        return m.vic[a - 0xD000]
+    bank = m.bank1 if m.mmu[6] & 0x40 else m.bank0
+    draw(lambda a: ROM[a - 0xD000] if 0xD000 <= a < 0xD800 else bank[a],
+         os.path.join(OUT, "shot-zx128vic-mon.png"), ROM, io=io)
+
+
 SCENES = {k[3:]: v for k, v in dict(globals()).items() if k.startswith("sc_")}
 
 

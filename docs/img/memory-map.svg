@@ -31,11 +31,11 @@
   <rect class="c64" x="100" y="304" width="440" height="22"/>
   <text class="t" x="116" y="320">The C64's I/O chips: VIC, SID, CIAs, the CPU switch</text>
   <rect class="z" x="100" y="326" width="440" height="22"/>
-  <text class="t" x="116" y="342">The VIC's screen and the ZX81 font</text>
+  <text class="t" x="116" y="342">The VIC's screen, the ZX81 font, zx64's second part</text>
   <rect class="z" x="100" y="348" width="440" height="22"/>
   <text class="t" x="116" y="364">zx64mon, second part</text>
   <rect class="c64" x="100" y="370" width="440" height="22"/>
-  <text class="t" x="116" y="386">The 6510's own page: its loader, the monitor's screen</text>
+  <text class="t" x="116" y="386">The 6510's own memory: its loader, the monitor's screen</text>
 
   <text class="a" x="40" y="45">0000</text>
   <text class="a" x="40" y="89">2000</text>

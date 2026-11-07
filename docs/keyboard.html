@@ -3,7 +3,8 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<!-- zx64: the ZX81's key legends on the C64 keyboard, as zx64 maps them.
+<!-- zx64: the ZX81's key legends on the C64 keyboard, as zx64 maps them,
+     and on the C128's, as zx128 and zx128vic do (keyboard.html?c128).
      Open in a browser. Legends decoded from the ZX81 ROM's key tables
      (K-UNSHIFT, K-SHIFT, K-FUNCT, K-GRAPH and the token table); no ROM
      bytes in here. -->
@@ -64,6 +65,21 @@ kbd{border:1px solid var(--line);border-bottom-width:2px;border-radius:4px;paddi
 .k.hit .kw.on,.k.hit .fn.on{color:var(--hl)}
 .space-row{padding-left:calc(var(--u)*3.6)}
 .fgap{flex:1 0 calc(var(--u)*.6)}
+/* the C128: the top row over the main keys and the keypad beside them */
+html.c128 .wrap{max-width:1440px}
+.c128row{margin-bottom:10px}
+.body{display:flex;gap:calc(var(--u)*.6)}
+.main{display:grid;gap:4px;align-content:start}
+.pad{display:grid;grid-template-columns:repeat(4,var(--u));column-gap:var(--g);row-gap:4px;align-content:start}
+.k.tall{grid-row:span 2;grid-template-rows:15px 1fr 15px}
+.k.wide{grid-column:span 2;width:auto}
+.cap .m.kp{color:#f5c56b}
+.k.tall .cap .m.small{font-size:11px;letter-spacing:0}
+.k.dead .cap .m{max-width:calc(100% - 12px)}
+.switch{display:flex;gap:6px;align-items:center;font-size:14px;color:var(--muted)}
+.switch a{font:600 13px var(--f-mono);padding:4px 10px;border-radius:999px;border:1px solid var(--line);color:var(--fg);text-decoration:none}
+.switch a[aria-current]{background:var(--fg);color:var(--bg);border-color:var(--fg)}
+html:not(.c128) .c128only, html.c128 .c64only{display:none}
 
 /* key anatomy legend */
 .anat{display:flex;flex-wrap:wrap;gap:14px 26px;align-items:center;font-size:14px}
@@ -95,7 +111,8 @@ kbd{border:1px solid var(--line);border-bottom-width:2px;border-radius:4px;paddi
 
 /* print: black on white, A4 landscape, no finder. docs/keyboard.pdf is this,
    printed by Chrome: chrome --headless --no-pdf-header-footer
-   --virtual-time-budget=8000 --print-to-pdf=docs/keyboard.pdf docs/keyboard.html */
+   --virtual-time-budget=8000 --print-to-pdf=docs/keyboard.pdf docs/keyboard.html
+   (docs/keyboard128.pdf: the same with keyboard.html?c128) */
 @media print{
   @page{size:A4 landscape;margin:10mm}
   :root,:root:not([data-theme="light"]),:root[data-theme="dark"]{
@@ -106,6 +123,9 @@ kbd{border:1px solid var(--line);border-bottom-width:2px;border-radius:4px;paddi
   .wrap{max-width:none;padding:0;gap:12px}
   section[aria-labelledby="h-find"]{display:none}
   .kb{--u:55px;--g:5px;padding:0}
+  html.c128 .kb{zoom:.84}
+  .k.tall{grid-template-rows:13px 1fr 13px}
+  .switch{display:none}
   .k{grid-template-rows:13px 52px 13px}
   .cap .s.long{font-size:7.5px;letter-spacing:0;right:4px}
   .cap .sub{font-size:9px;top:21px;line-height:1}
@@ -129,7 +149,7 @@ kbd{border:1px solid var(--line);border-bottom-width:2px;border-radius:4px;paddi
   .cap{box-shadow:none}
   .k .fn{font-style:italic}
   .k.extra .cap{border-width:2px;border-color:#000}
-  .k.extra .cap .m.small{color:#000}
+  .k.extra .cap .m.small,.cap .m.kp{color:#000}
   .k.dead .cap{border-color:#999}
   .cap .c64{color:#555;bottom:5px}
   .cap svg{filter:invert(1)}
@@ -143,7 +163,10 @@ kbd{border:1px solid var(--line);border-bottom-width:2px;border-radius:4px;paddi
 <body>
 <div class="wrap">
 <header>
-  <h1>zx64 <span>keyboard</span></h1>
+  <h1><span class="c64only">zx64</span><span class="c128only" style="color:inherit">zx128</span> <span>keyboard</span></h1>
+  <nav class="switch noprint" aria-label="Keyboard">
+    <a href="?" id="sw64">C64</a><a href="?c128" id="sw128">C128</a>
+  </nav>
 </header>
 
 <section aria-labelledby="h-find">
@@ -177,7 +200,7 @@ kbd{border:1px solid var(--line);border-bottom-width:2px;border-radius:4px;paddi
 
 <section id="extras">
   <div class="tbl"><table class="extras">
-    <thead><tr><th>C64 key</th><th>ZX81</th></tr></thead>
+    <thead><tr><th><span class="c64only">C64</span><span class="c128only">C128</span> key</th><th>ZX81</th></tr></thead>
     <tbody>
       <tr><td><kbd>RETURN</kbd></td><td>NEWLINE. <kbd>SHIFT</kbd> <kbd>RETURN</kbd> is FUNCTION</td></tr>
       <tr><td><kbd>INST/DEL</kbd></td><td>RUBOUT (the ZX81's <kbd>SHIFT</kbd> <kbd>0</kbd>)</td></tr>
@@ -192,6 +215,8 @@ kbd{border:1px solid var(--line);border-bottom-width:2px;border-radius:4px;paddi
       <tr><td><kbd>F5</kbd></td><td>The monitor; F5 or X goes back</td></tr>
       <tr><td><kbd>F7</kbd></td><td>Reset</td></tr>
       <tr><td><kbd>F8</kbd></td><td>Memory: 16K, 32K, 1K (resets)</td></tr>
+      <tr class="c128only"><td><kbd>↑</kbd> <kbd>↓</kbd> <kbd>←</kbd> <kbd>→</kbd></td><td>The four cursor keys in the top row: the ZX81's cursor keys</td></tr>
+      <tr class="c128only"><td>The keypad</td><td>Its digits and <kbd>.</kbd> as the main keys; <kbd>ENTER</kbd> as <kbd>RETURN</kbd></td></tr>
     </tbody>
   </table></div>
 </section>
@@ -253,6 +278,16 @@ const rows = [
   [{c:'C='},{c:'SHIFT',x:'SHIFT',w:1.75},'Z','X','C','V','B','N','M',{c:','},'.',{c:'/'},{c:'SHIFT',x:'SHIFT',w:1.25},{c:'CRSR ⇕',x:'↓ ⇧↑'},{c:'CRSR ⇔',x:'→ ⇧←'},{c:'F7',x:'RESET',sub:'⇧ RAM SIZE',f:1,w:1.5}],
   [{z:'SPACE',c:'also BREAK',w:9}]
 ];
+// The C128: the same main keys without the F-key column; the top row (F-keys
+// at its right, over the keypad) and the keypad. p: a key that gives a main
+// key's character (the keypad), shown as that.
+const c128 = /(^|[?&])c128\b/.test(location.search);
+const top128 = [{c:'ESC'},{c:'TAB'},{c:'ALT'},{c:'CAPS LOCK'},
+  {c:'HELP',f:1},{c:'LINE FEED'},{c:'40/80 DISPLAY'},{c:'NO SCROLL'},
+  {c:'↑',x:'↑ up',f:1},{c:'↓',x:'↓ down'},{c:'←',x:'← left'},{c:'→',x:'→ right'},
+  {c:'F1',x:'TYPE-AHEAD',sub:'⇧ COLOURS',f:1,w:1.5},{c:'F3',x:'JOYSTICK',w:1.5},{c:'F5',x:'MONITOR',w:1.5},{c:'F7',x:'RESET',sub:'⇧ RAM SIZE',w:1.5}];
+const pad128 = [{p:'7'},{p:'8'},{p:'9'},{c:'+'},{p:'4'},{p:'5'},{p:'6'},{c:'-'},
+  {p:'1'},{p:'2'},{p:'3'},{p:'NEWLINE',c:'ENTER',tall:1},{p:'0',wide:1},{p:'.'}];
 const capName = z => z==='NEWLINE' ? 'RETURN' : z;
 const el = (t,cls,txt) => { const e=document.createElement(t); if(cls) e.className=cls; if(txt!=null) e.textContent=txt; return e; };
 
@@ -277,34 +312,56 @@ function glyph(code){
 
 const keyEls = {};
 const kb = document.getElementById('kb');
-rows.forEach((row,ri)=>{
-  const r = el('div','row'+(ri===4?' space-row':''));
-  row.forEach(spec=>{
-    if(typeof spec==='string') spec={z:spec};
+function key(spec){
+  if(typeof spec==='string') spec={z:spec};
+  const k = el('div','k'); k.style.setProperty('--w', spec.w||1);
+  const z = spec.z && K[spec.z];
+  const kw = el('div','kw', z && z.kw || ''), cap = el('div','cap'), fn = el('div','fn', z && z.fn || '');
+  if(z){
+    cap.appendChild(el('span', spec.z.length>1 ? 'm small' : 'm', spec.z));
+    if(z.sh) cap.appendChild(el('span', z.sh.length>2 ? 's long' : 's', z.sh));
+    if(z.gr!=null) cap.appendChild(glyph(z.gr));
+    if(spec.c) cap.appendChild(el('span','c64',spec.c));
+    keyEls[spec.z] = k;
+  } else if(spec.p){
+    k.classList.add('extra');
+    cap.appendChild(el('span', spec.p.length>1 ? 'm small' : 'm kp', spec.p));
+    if(spec.c) cap.appendChild(el('span','c64',spec.c));
+  } else if(spec.x){
+    k.classList.add('extra');
+    cap.appendChild(el('span','m small',spec.x));
+    if(spec.sub) cap.appendChild(el('span','sub',spec.sub));
+    cap.appendChild(el('span','c64',spec.c));
+    if(!keyEls['x:'+spec.x]) keyEls['x:'+spec.x] = k;
+  } else {
+    k.classList.add('dead');
+    cap.appendChild(el('span','m',spec.c));
+  }
+  if(spec.tall) k.classList.add('tall');
+  if(spec.wide) k.classList.add('wide');
+  k.append(kw,cap,fn);
+  return k;
+}
+function row(specs, cls){
+  const r = el('div','row'+(cls?' '+cls:''));
+  specs.forEach(spec=>{
     if(spec.f) r.appendChild(el('div','fgap'));     // the function keys stand apart
-    const k = el('div','k'); k.style.setProperty('--w', spec.w||1);
-    const z = spec.z && K[spec.z];
-    const kw = el('div','kw', z && z.kw || ''), cap = el('div','cap'), fn = el('div','fn', z && z.fn || '');
-    if(z){
-      cap.appendChild(el('span', spec.z.length>1 ? 'm small' : 'm', spec.z));
-      if(z.sh) cap.appendChild(el('span', z.sh.length>2 ? 's long' : 's', z.sh));
-      if(z.gr!=null) cap.appendChild(glyph(z.gr));
-      if(spec.c) cap.appendChild(el('span','c64',spec.c));
-      keyEls[spec.z] = k;
-    } else if(spec.x){
-      k.classList.add('extra');
-      cap.appendChild(el('span','m small',spec.x));
-      if(spec.sub) cap.appendChild(el('span','sub',spec.sub));
-      cap.appendChild(el('span','c64',spec.c));
-      keyEls['x:'+spec.x] = k;
-    } else {
-      k.classList.add('dead');
-      cap.appendChild(el('span','m',spec.c));
-    }
-    k.append(kw,cap,fn); r.appendChild(k);
+    r.appendChild(key(spec));
   });
-  kb.appendChild(r);
-});
+  return r;
+}
+if(c128){
+  document.documentElement.classList.add('c128');
+  document.title = 'zx128 Keyboard Overlay';
+  kb.appendChild(row(top128,'c128row'));
+  const body = el('div','body'), main = el('div','main'), pad = el('div','pad');
+  rows.forEach((r,ri)=>main.appendChild(row(r.filter(s=>!s.f), ri===4?'space-row':'')));
+  pad128.forEach(s=>pad.appendChild(key(s)));
+  body.append(main,pad); kb.appendChild(body);
+} else {
+  rows.forEach((r,ri)=>kb.appendChild(row(r, ri===4?'space-row':'')));
+}
+document.getElementById(c128?'sw128':'sw64').setAttribute('aria-current','page');
 
 /* everything you can type, and how */
 const entries = [];

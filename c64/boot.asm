@@ -9,7 +9,8 @@
 ;
 ; tools/build.py puts this at $0801 and the patched ROM and the Z80 code
 ; behind it, so the Z80 image lands at $1000-$3xxx, and the JiffyDOS reader
-; (c64/jcore.asm) at $3E00, which start puts in place.
+; (c64/jcore.asm) at $3E00 and zx64's second area behind it, which start
+; puts in place.
 
 !cpu 6510
 
@@ -72,19 +73,21 @@ start:  sei
 
         jsr chars
 
-        lda #0                  ; ZX81 space is 0; colour RAM black
-cl:     sta $e000,x
-        sta $e100,x
-        sta $e200,x
-        sta $e300,x
-        sta $d800,x
-        sta $d900,x
+                                ; (X = 0, chars's)
+cl:     lda #$80                ; the screen solid (the font's inverse space)
+        sta $e000,x             ; and white, as the border: the frame round
+        sta $e100,x             ; the ZX81's 32x24 picture (columns 0-3 and
+        sta $e200,x             ; 36-39 of rows 0-23, all of row 24) stays
+        sta $e300,x             ; so, in the border's colour (the Z80's
+        lda #1                  ; setcol, at the first key wait: then the
+        sta $d800,x             ; picture's cells the characters' colour,
+        sta $d900,x             ; black, and blit's picture over them)
         sta $da00,x
         sta $db00,x
         inx
         bne cl
 
-        lda #1                  ; white border and background
+                                ; white border and background (A = 1)
         sta $d020
         sta $d021
         lda $dd02               ; VIC bank 3 ($C000-$FFFF)
@@ -94,6 +97,7 @@ cl:     sta $e000,x
         and #$fc
         sta $dd00
         jsr jinst               ; the JiffyDOS reader into place (c64/jcore.asm)
+        jsr hiinst              ; and zx64's second area (see $0C00)
         lda #$8a                ; screen $E000, chars $E800: $C000-$CFFF
         sta $d018               ; is left for the ZX81's 32K
         lda #$17                ; 24 rows, yscroll 7: rows 0-23 exactly fill
@@ -400,7 +404,7 @@ cs:     lda CHARSRC,x
 ; cells at BAR, the spinner's cell at SPIN (the row inverse, the bar
 ; white). The bar fills black from the left, a half cell, 1/16, at a
 ; time, by a running sum (16 for each byte, the total taken off each
-; time it is reached: no dividing); the spinner, zedwire MUSIC's, turns
+; time it is reached: no dividing); the spinner turns
 ; every 128 bytes. pinit: from PTR to eend; pzero: tot as it is; pstep:
 ; a byte more (keeps Y).
 BAR     = $e01a                 ; Z80 $D01A: row 0, column 22
@@ -470,7 +474,7 @@ pspn:   inc bcnt
         lda spglyph,x
         sta SPIN
 pdone:  rts
-spglyph:                        ; zedwire's, inverse: a quarter, half, three
+spglyph:                        ; inverse: a quarter, half, three
         !byte $81,$83,$04,$00,$01,$03,$84,$80   ; quarters, full, and back
 
 pw:     !text ",P,W"
@@ -529,6 +533,19 @@ more:   sec
         rts
 +       jmp loop
 mtab:   !word doprg-1, dodir-1, dodirl-1, dodirc-1, dowrite-1, docmd-1, dorom-1
+
+; zx64's second area (Z80 ZX64HI, z80/zx64.asm) to HIDEST, C64 $E500: RAM
+; under the kernal, which the 6510 writes with the kernal in (the Z80
+; always sees RAM there). tools/build.py stages its HILEN bytes (1-255) at
+; HISTAGE, behind the JiffyDOS reader in the keyboard page and the mailbox,
+; which don't matter until the Z80 starts.
+!if HILEN < 1 or HILEN > 255 { !error "zx64's second area: HILEN must be 1-255 for hiinst's loop" }
+hiinst: ldx #HILEN
+-       lda HISTAGE-1,x
+        sta HIDEST-1,x
+        dex
+        bne -
+        rts
 
 ; The ZX81 ROM again, when a program has written over it (F7 or F8): ZX64
 ; (the file named in the mailbox), its bytes for Z80 $0000-$1FFF, skipping the
@@ -715,11 +732,10 @@ dowrite:
         jmp sloop               ; as SAVE: the bytes, then the drive's word
 
 ; C=1 if hdr (the file's first 13 bytes, $4009-$4015) isn't the start of
-; a ZX81 program: VERSN 0, D_FILE from $407D (past the system variables),
-; VARS not before it, E_LINE after VARS. Every .P passes; code doesn't.
-isprog: lda hdr                 ; VERSN
-        bne ip_no
-        lda hdr+3               ; D_FILE >= $407D
+; a ZX81 program: D_FILE from $407D (past the system variables), VARS
+; not before it, E_LINE after VARS. Every .P passes; code doesn't. VERSN
+; isn't looked at: the ROM never reads it, and some .P files have 1 there.
+isprog: lda hdr+3               ; D_FILE >= $407D
         cmp #$7d
         lda hdr+4
         sbc #$40
@@ -781,7 +797,9 @@ dodirl: lda #$36
         sta MB+1
         jmp done
 dlend:  jsr CLRCHN
-dodirc: lda #2
+dodirc: lda #$36                ; the kernal in: RUN/STOP in $ comes here
+        sta $01                 ; straight from done's $35
+        lda #2
         jsr CLOSE
         jsr CLRCHN
         lda #ST_ERR

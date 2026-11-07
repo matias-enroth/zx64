@@ -23,7 +23,7 @@ zx64's own code, and programs too big for 16K.
 import os
 import sys
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "extras", "zxbasic"))
 from zxbasic import TOKENS  # noqa: E402
 
 BASE = 0x4009                                    # where a .p file loads
@@ -386,6 +386,9 @@ class Code:
 
 
 # ---------------------------------------------------------------- zx64
+ZX64HI, ZX64HIEND = 0xD500, 0xD700      # zx64's second code area (z80/hw64.inc; make test compares)
+
+
 def area(z):
     """(harm, what) for a Z80 address on zx64: harm 0 none, 1 some, 2 a crash or hang."""
     if z < 0x1E00:
@@ -410,8 +413,14 @@ def area(z):
         return 2, "the cartridge's CPU switch: the 6510 takes over"
     if z < 0xD400:
         return 0, "the picture (a stray character until the next copy)"
+    if z < ZX64HI:
+        return 0, "the monitor's buffers (unused while it isn't running)"
+    if z < ZX64HIEND:
+        return 2, "zx64's second code area (LOAD, SAVE, F7 and F5 run it; nothing puts it back)"
+    if z < 0xD800:
+        return 0, "the monitor's stack (unused while it isn't running)"
     if z < 0xE000:
-        return 0, "free RAM or the font (a character may change shape)"
+        return 0, "the font (a character may change shape)"
     if z < 0xF000:
         return 1, "zx64mon's second part (F5 loads it again if its mark is gone)"
     return 2, "the 6510's zero page, stack or loader"
@@ -487,8 +496,15 @@ def check(path):
     if len(data) < 0x407D - BASE:
         return [("warn", None, "too short for a .p file")]
     prog = Program(data)
+    first = next(prog.lines(), None)              # a BASIC line: number, its body ending NEWLINE
+    if first is None or first[0] > 9999 or not first[2] or first[2][-1] != 0x76:
+        out.append(("warn", None, "machine code from $407D, not BASIC: a program built with its "
+                    "own system variables (as modern cross-assembled games are), which starts "
+                    "itself at LOAD; whether it works can't be checked here: such programs often "
+                    "make their own display or run code from the display file, which zx64 draws "
+                    "without running: a blank screen, or a game far too slow)"))
     if prog.eline > 0x7FF0:
-        out.append(("warn", None, f"ends at ${prog.eline:04X}: too big for 16K, press F3 for 32K first"))
+        out.append(("warn", None, f"ends at ${prog.eline:04X}: too big for 16K, press F8 (SHIFT+F7) for 32K first"))
     entries = []
     for line, a in prog.usrs():
         if a is None:

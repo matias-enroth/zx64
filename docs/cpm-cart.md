@@ -32,9 +32,8 @@ Sources:
   stops it (Z80 `$CE00`). The 6510 is held by `/DMA`, the Z80 by `BUSRQ`;
   each carries on after its own write. **source, VICE, hardware**
 - **A NOP must follow each switching write**, on both CPUs (Commodore's
-  guide, 6.6.1 and 6.7.1). Without it the Z80 lost the byte after its
-  switch: `LD A,$F1` ran as `POP AF` and `LOAD "BOULDERL"` crashed. VICE
-  doesn't model this. **hardware**
+  guide, 6.6.1 and 6.7.1). Without it the Z80 loses the byte after its
+  switch: `LD A,$F1` runs as `POP AF`. VICE doesn't model this. **hardware**
 - The Z80 starts at `$0000` on its first switch after reset, which needs
   a NOP too (the guide, 6.6). **VICE**
 - Any write to that page switches, including a stray `POKE 52736,1`.

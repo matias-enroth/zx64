@@ -6,6 +6,17 @@
 ; columns by 25 rows at C64 $0400, in the C64's own characters; the
 ; ZX81's picture is left as it is, and comes back on leaving.
 ;
+; zx128 has it too, resident: assembled with zx128's addresses (MON128),
+; in its file from the start (c128/boot128.asm puts the parts at $3000 and
+; $E000), entered through z80/zx128.asm's mon_go. Its screen there is 48
+; columns in RAM, shown on the VDC beside the ZX81 at half width
+; (z80/monvdc.inc). zx128vic has it resident too (MON128 2), its screen
+; on the VIC as zx64's, 40 columns at $C400 in bank 1, shown in place of
+; the ZX81's (z80/monvic.inc). What differs is in the platform layer
+; (hw64.inc, hw128.inc, hwvic128.inc) and scr_on, scr_off. The C128
+; builds' monitor has a third part (MON128 only), in common RAM at
+; $FF05-$FFED: their own commands (V), see part 3.
+;
 ; The commands are Supermon's, in hex, for the Z80:
 ;   M s [e]        memory, 8 bytes a line with their ZX81 characters
 ;   D s [e]        disassemble (D or M alone: on from where it stopped)
@@ -26,42 +37,51 @@
 ;   F s e b        fill          T s e d   transfer
 ;   C s e d        compare       H s e b b ... or H s e 'TEXT  hunt
 ;   = n            n in hex, decimal and binary (+n decimal, %n binary)
+;   V              (zx128, zx128vic) the ZX81's system variables, to read
 ;   ?              help
-; The screen is edited as on a C64: the cursor keys, INST/DEL, CLR/HOME,
-; CTRL+HOME (the bottom row), RVS ON and OFF (CTRL+9, CTRL+0), and RETURN
-; takes the line the cursor
+; The screen is edited as on a C64: the cursor keys (zx128 and zx128vic:
+; the C128's top-row ones too, as those, and its keypad as the main keys:
+; io128.inc's kscan_more),
+; INST/DEL, CLR/HOME, CTRL+HOME (the bottom row), RVS ON and OFF (CTRL+9,
+; CTRL+0), and RETURN takes the line the cursor
 ; is on. CRSR UP/DOWN at the top and
 ; bottom scroll an M or D listing (sc_up, sc_dn). RUN/STOP stops a long
 ; listing. F5 or X goes back to the ZX81.
 
         include "core.inc"      ; zx64's MON_RET, MONIFF, NOTBAD, CREAD, BP_OFF,
                                 ; BPCNT, BPTAB, MONWHY, CALL6510, MBOX, SETCOL,
-                                ; GHOSTY
-                                ; (build.py)
+                                ; GHOSTY (build.py); MON128 0. zx128's the same
+                                ; (but SETCOL), MON128 1, and its screen's
+                                ; (z80/monvdc.inc): mon_on, mon_off, mon_flush,
+                                ; mon_all, mon_cmd, mon_poll. zx128vic's as
+                                ; zx128's, MON128 2, but for the last four
+                                ; (z80/monvic.inc: mon_on, mon_off)
 
-VIC:     equ $C000
-CIA1:    equ $CC00
-CIA2:    equ $CD00
-COLOUR:  equ $C800              ; C64 $D800
-MSCR:    equ $F400              ; C64 $0400, the monitor's screen
-MSTACK:  equ $D800              ; its stack, from $D7FF down: C64 $E400-$E7FF,
-                                ; free between the ZX81's screen and font
-; Buffers, at the stack's far end (not in the file): the line's screen
-; codes (rvor), the line as ASCII, bytes from ":", D's text, A's numbers'
-; kinds and places (see koff), a candidate's bytes, the text's numbers'
-; values, the text and a candidate's normalized, the keys
-LINERV:  equ $D400
-linebuf: equ LINERV+40          ; 41
-pat:     equ linebuf+41         ; 40
-dtext:   equ pat+40             ; 24
+        if MON128 = 2           ; the chips' access (macros), and the
+        include "hwvic128.inc"  ; screen's platform layer: MCOLS, MSCR,
+        else                    ; MSTACK, MBUF, mflush, mdirty, mdirtyall,
+        if MON128               ; mcmd, mpoll (see hw64.inc)
+        include "hw128.inc"
+        else
+        include "hw64.inc"
+        endif
+        endif
+; Buffers, at MBUF (not in the file): the line's screen codes (rvor), the
+; line as ASCII, bytes from ":", D's text, A's numbers' kinds and places
+; (see koff), a candidate's bytes, the text's numbers' values, the text
+; and a candidate's normalized, the keys
+LINERV:  equ MBUF
+linebuf: equ LINERV+MCOLS       ; MCOLS+1
+pat:     equ linebuf+MCOLS+1    ; MCOLS
+dtext:   equ pat+MCOLS          ; 24
 klist:   equ dtext+24           ; 8
 cbuf:    equ klist+8            ; 4
 nval:    equ cbuf+4             ; 8
 cvals:   equ nval+8             ; 8
-ninp:    equ cvals+8            ; 40
-ncand:   equ ninp+40            ; 24
+ninp:    equ cvals+8            ; MCOLS
+ncand:   equ ninp+MCOLS         ; 24
 kmat:    equ ncand+24           ; 8
-kprev:   equ kmat+8             ; 8, to $D4FD
+kprev:   equ kmat+8             ; 8 (zx64: to $D4FD)
 BORDERCOL: equ 14                ; the C64's colours: light blue on blue
 BACKCOL:  equ 6
 TEXTCOL:  equ 14
@@ -84,6 +104,9 @@ K_LEFT:  equ 157
         org $3000
         jp entry
         db "ZM",1               ; zx64 looks for "ZM"; the version
+        if MON128 = 0
+mstamp: dw 0                    ; zx64's build stamp (build.py): its mon_here
+        endif                   ; takes only its own build's
 
 ; ---------------------------------------------------------------- in, out
 ; On the stack: HL DE BC AF and the return address, as zx64 left them.
@@ -134,16 +157,36 @@ en_f5:  call scr_on
         call bpshow             ; stopped at a breakpoint, or a step done
         jr main
 en_hello:
+        if MQUIET               ; the title and the registers on the first
+        ld hl,(crow)            ; F5 only: the cursor at 0, 0 (scr_on's
+        ld a,h                  ; first time, the screen cleared; leaving
+        or l                    ; never leaves it there). Then the screen as
+        jr nz,en_p              ; it was left, the prompt on the line after
+                                ; (leave: every leave moves the cursor down)
+        call title              ; the last one used: the cursor's (RETURN's
+        call cmd_r              ; down, or leave_f5's, went there)
+en_p:   call prompt
+        jr main
+title:                          ; (? too)
+        endif
         call lstart
         call putsi
+        if MON128               ; (the C128 builds' own name: zx128's and
+        db "#ZX128MON ",0       ; zx128vic's monitor, its version theirs:
+        else                    ; build.py's VERSION, the same)
         db "#ZX64MON ",0
+        endif
         ld hl,verstr
         call puts
         call putsi
         db "   ? HELP   X OR F5: BACK",0
+        if MQUIET
+        jp down
+        else
         call down
         call cmd_r
         call prompt
+        endif
 main:   call getline
         call exec
         jr main
@@ -151,7 +194,15 @@ main:   call getline
 ; Back to what was running, with the registers as they are now: the
 ; same stack layout at SP, through zx64's mon_ret. Every key up first,
 ; or the ZX81 would take RETURN or F5 for its own.
-leave:  call kup
+        if MQUIET               ; F5 at a line: the cursor to the next, as
+leave_f5:                       ; RETURN (for X or G) has it, once every key
+        call kup                ; is up (the screen's last flush: the
+        call down               ; scroll at the bottom row unseen till the
+        jr leave_k              ; next F5's)
+        endif
+leave:  call kup                ; (every way here has moved the cursor down a
+leave_k:                        ; line, RETURN or leave_f5: never left at 0, 0,
+                                ; which zx128's en_hello takes as the first F5)
         call scr_off
 leave_q:
         ld a,(loaded)           ; a program loaded (L "NAME"): not back to
@@ -216,14 +267,27 @@ pgo:    set 7,(iy+$01)          ; FLAGS
         jp $0058
 
 ; ---------------------------------------------------------------- screen
+; zx128: the VDC's, z80/monvdc.inc's (the first time a clear screen, as
+; here); leaving for a step (S), A says so: the monitor's screen stays.
+; zx128vic: the VIC's, z80/monvic.inc's, the same way.
+        if MON128
+scr_on: ld a,(inited)
+        or a
+        call z,cls
+        ld a,1
+        ld (inited),a
+        jp mon_on
+scr_off:
+        ld a,(stepping)
+        jp mon_off
+        else
 ; The ZX81's VIC settings are put back as c64/boot.asm makes them, not
 ; as read: a read of the I/O can come back wrong on the cartridge. CIA2's
 ; $DD00 also holds the serial bus's lines, so it is read, three times.
 ZX_D011: equ $17                ; 24 rows, yscroll 7, raster IRQ line 250
 ZX_D018: equ $8A                ; screen $E000, characters $E800
 
-scr_on: ld hl,CIA2
-        call rd3
+scr_on: cia2_rd3
         ld (sv_dd00),a
         ld a,(inited)           ; the first time: a clear screen; then
         or a                    ; as it was left
@@ -233,42 +297,45 @@ scr_on: ld hl,CIA2
         ld a,TEXTCOL
         call colours
         ld a,BORDERCOL
-        ld (VIC+$20),a
+        vic_wr $20
         ld a,BACKCOL
-        ld (VIC+$21),a
+        vic_wr $21
         ld a,(sv_dd00)
         or 3                    ; VIC bank 0: the C64's character ROM at $1000
-        ld (CIA2),a
+        cia2_wr 0
         ld a,$14                ; screen $0400, characters $1000
-        ld (VIC+$18),a
+        vic_wr $18
         ld a,$1B                ; 25 rows
-        ld (VIC+$11),a
+        vic_wr $11
         ret
 
 scr_off:
         ld a,(sv_dd00)
-        ld (CIA2),a
+        cia2_wr 0
         ld a,ZX_D018
-        ld (VIC+$18),a
+        vic_wr $18
         ld a,ZX_D011
-        ld (VIC+$11),a
+        vic_wr $11
         jp SETCOL               ; zx64's: the colour scheme F2 chose
 
 colours:                        ; A into all of colour RAM: written, never
-        ld hl,COLOUR            ; read (an LDIR copies by reading it, and a
+        col_ptr                 ; read (an LDIR copies by reading it, and a
         ld c,4                  ; read of the I/O can come back wrong on the
 fillc1: ld b,250                ; cartridge: seen, runs of black and grey)
-fillc2: ld (hl),a
+fillc2: col_wr
         inc hl
         djnz fillc2
         dec c
         jr nz,fillc1
+        col_end
         ret
+        endif
 
-cls:    ld hl,MSCR
+cls:    mdirtyall
+        ld hl,MSCR
         ld (hl),$20
         ld de,MSCR+1
-        ld bc,999
+        ld bc,MCOLS*25-1
         ldir
         xor a
         ld (crow),a
@@ -277,16 +344,22 @@ cls:    ld hl,MSCR
 
 rowp:   push de                 ; HL = the start of the cursor's row
         ld a,(crow)
+        mdirty
         ld l,a
         ld h,0
+        add hl,hl               ; x 40 (8 + 32), or 48 (16 + 32)
         add hl,hl
         add hl,hl
+        if MCOLS = 48
         add hl,hl
+        endif
         ld d,h
         ld e,l
         add hl,hl
+        if MCOLS = 40
         add hl,hl
-        add hl,de
+        endif
+        add hl,de               ; (other widths: build.py stops)
         ld de,MSCR
         add hl,de
         pop de
@@ -306,7 +379,7 @@ lstart: push hl                 ; the cursor's row cleared, column 0
         xor a
         ld (ccol),a
         call rowp
-        ld b,40
+        ld b,MCOLS
 ls1:    ld (hl),$20
         inc hl
         djnz ls1
@@ -325,12 +398,13 @@ down:   push hl                 ; column 0 of the next row, scrolling at
         inc a
         ld (crow),a
         jr dn_done
-dn_scr: ld hl,MSCR+40
+dn_scr: mdirtyall
+        ld hl,MSCR+MCOLS
         ld de,MSCR
-        ld bc,960
+        ld bc,MCOLS*24
         ldir
         ex de,hl                ; DE: the last row (HL is past the screen)
-        ld b,40
+        ld b,MCOLS
 dn_cl:  ld (hl),$20
         inc hl
         djnz dn_cl
@@ -340,12 +414,12 @@ dn_done:
         pop hl
         ret
 
-; A = a screen code at the cursor, which moves on (not past column 40).
-; Keeps all but A.
+; A = a screen code at the cursor, which moves on (not past the last
+; column). Keeps all but A.
 pscr:   push hl
         push af
         ld a,(ccol)
-        cp 40
+        cp MCOLS
         jr nc,ps_no
         call cpos
         inc a
@@ -435,6 +509,7 @@ zc_ret: pop hl
         ret
 
 ; HL: an I/O register, read three times: each bit as two of them have it.
+        if MON128 = 0           ; (zx64's cia2_rd3)
 rd3:    push bc
         push de
         ld b,(hl)
@@ -453,6 +528,7 @@ rd3:    push bc
         pop de
         pop bc
         ret
+        endif
 
 prompt: call lstart
         ld a,'.'
@@ -461,14 +537,15 @@ prompt: call lstart
 ; ---------------------------------------------------------------- keys
 ; Polled once a frame (the VIC's raster flag, latched at line 250; the
 ; interrupts are off in here). A key is taken as it goes down, and
-; repeats when held.
-fwait:  ld a,(VIC+$19)          ; the raster flag (line 250)
+; repeats when held. The screen's changes are shown first (mflush).
+fwait:  mflush
+fw_1:   vic_rd $19              ; the raster flag (line 250)
         rra
-        jr nc,fwait
+        jr nc,fw_1
         call NOTBAD             ; read just after a bad line it can be
-        jr c,fwait              ; wrong (zx64's notbad)
+        jr c,fw_1               ; wrong (zx64's notbad)
         ld a,1
-        ld (VIC+$19),a
+        vic_wr $19
         push hl
         ld hl,(nframes)         ; frames counted (make test checks them)
         inc hl
@@ -484,9 +561,14 @@ ks1:    ld a,b
         inc hl
         rlc b
         jr c,ks1
+        kscan_more              ; the machine's extra keys (HL: kmat+8)
         ld a,$FF
-        ld (CIA1),a
+        cia1_wr 0
         ret
+
+        if MON128
+        include "k2mon.inc"     ; the C128's: its keypad and cursor keys
+        endif
 
 kcopy:  ld hl,kmat
         ld de,kprev
@@ -628,7 +710,7 @@ gk_ret: push af
 
 curflip:                        ; the cursor: its character reversed
         ld a,(ccol)
-        cp 40
+        cp MCOLS
         ret nc
         call cpos
         ld a,(hl)
@@ -647,11 +729,12 @@ curoff: ld a,(curst)
 
 ; RUN/STOP down: back to the prompt (when it is up again).
 stopchk:
+        mpoll                   ; (a listing's rows shown as it goes)
         ld a,$7F                ; column 7, row 7
         call CREAD
         push af
         ld a,$FF
-        ld (CIA1),a
+        cia1_wr 0
         pop af
         rla
         ret c
@@ -700,7 +783,11 @@ gl_key: call getkey
         cp K_INST
         jp z,insch
         cp K_F5
+        if MQUIET
+        jp z,leave_f5
+        else
         jp z,leave
+        endif
         cp K_RVSON
         jr z,rvon
         cp K_RVSOFF
@@ -710,7 +797,8 @@ gl_key: call getkey
         cp $60
         ret nc
         call a2s                ; typed: at the cursor, which moves on to
-        ld hl,rvs               ; column 39 at most; reversed after RVS ON
+        ld hl,rvs               ; the last column at most; reversed after
+                                ; RVS ON
         or (hl)
         push af
         call cpos
@@ -718,7 +806,7 @@ gl_key: call getkey
         ld (hl),a
 crright:
         ld a,(ccol)
-        cp 39
+        cp MCOLS-1
         ret nc
         inc a
         ld (ccol),a
@@ -767,7 +855,7 @@ delch:  ld a,(ccol)             ; the character left of the cursor out,
         inc hl
         ld a,(ccol)
         ld b,a
-        ld a,39
+        ld a,MCOLS-1
         sub b
         jr z,dl_end
         ld c,a
@@ -777,14 +865,14 @@ dl_end: ex de,hl
         ld (hl),$20
         ret
 insch:  call rowp               ; a space at the cursor, the rest moved on
-        ld de,39
+        ld de,MCOLS-1
         add hl,de
         ld d,h
         ld e,l
         dec hl
         ld a,(ccol)
         ld b,a
-        ld a,39
+        ld a,MCOLS-1
         sub b
         jr z,in_end
         ld c,a
@@ -817,9 +905,10 @@ sc_up:  ld hl,MSCR
         jr su_put
 su_d:   call dback
 su_put: ld (a3),hl
-        ld hl,MSCR+959          ; rows 0-23 to 1-24 (scline clears row 0)
-        ld de,MSCR+999
-        ld bc,960
+        mdirtyall
+        ld hl,MSCR+MCOLS*24-1   ; rows 0-23 to 1-24 (scline clears row 0)
+        ld de,MSCR+MCOLS*25-1
+        ld bc,MCOLS*24
         lddr
         call scline
         pop af
@@ -828,11 +917,11 @@ su_put: ld (a3),hl
         ld (ccol),a
         ret
 
-sc_dn:  ld hl,MSCR+960          ; up from row 24, over empty rows and "."
+sc_dn:  ld hl,MSCR+MCOLS*24     ; up from row 24, over empty rows and "."
         ld b,24
 sd1:    call rowmt
         jr nz,sd2
-        ld de,-40
+        ld de,-MCOLS
         add hl,de
         dec b
         jp m,cd_row
@@ -903,7 +992,7 @@ rowmt:  push hl
         ld a,' '
 rt1:    cp ' '
         jr nz,rt_x
-        ld b,39
+        ld b,MCOLS-1
 rt2:    inc hl
         ld a,(hl)
         cp ' '
@@ -977,11 +1066,11 @@ dc2:    pop de
 gl_ret: call rowp
         push hl                 ; the row as it is, for rvor
         ld de,LINERV
-        ld bc,40
+        ld bc,MCOLS
         ldir
         pop hl
         ld de,linebuf
-        ld b,40
+        ld b,MCOLS
 gr1:    ld a,(hl)               ; screen codes back to ASCII
         and $7F
         cp $20
@@ -1031,6 +1120,7 @@ ex_find:
         ld (quiet),a
         ex de,hl
         call jphl
+        mcmd
         ld a,(quiet)            ; ":", ";", "'": no prompt, so the next
         or a                    ; line M showed can be changed in turn
         ret nz
@@ -1083,6 +1173,10 @@ cmds:   db 'M'
         dw cmd_eq
         db 'Z'
         dw cmd_z
+        if MON128
+        db 'V'                  ; (part 3)
+        dw cmd_v
+        endif
         db 0
 
 err:    ld sp,MSTACK            ; "#?", and the prompt
@@ -1221,7 +1315,7 @@ co_put: call co_st
 
 co_str: inc hl                  ; 'TEXT: to the next "'" or the line's last
         push hl                 ; non-space (a2)
-        ld hl,linebuf+40
+        ld hl,linebuf+MCOLS
 cs_ls:  dec hl
         ld a,(hl)
         cp ' '
@@ -1750,33 +1844,51 @@ hend:   ld a,(ncol)             ; a part line ended
         jp down
 
 cmd_help:
+        if MQUIET
+        call title              ; (the first F5's)
+        endif
         ld hl,help
-hp1:    call lstart
-        call puts
-        call down
+hp1:    call lstart             ; a line: a tab (9) on to column 13
+hp2:    ld a,(hl)
+        inc hl
+        or a
+        jr z,hp4
+        cp 9
+        jr z,hp3
+        call pch
+        jr hp2
+hp3:    ld a,13
+        ld (ccol),a
+        jr hp2
+hp4:    call down
         ld a,(hl)
         or a
         jr nz,hp1
         ret
 
-help:   db "M S [E]     MEMORY, 8 BYTES A LINE",0
-        db "D S [E]     DISASSEMBLE (M, D ALONE: ON)",0
-        db "B [A]       BREAKPOINT AT A (AGAIN: OFF)",0
-        db "S           ONE STEP (RETURN: ANOTHER)",0
-        db "A A TEXT    ASSEMBLE ($ OR 0 BEFORE HEX)",0
-        db "$           THE DIRECTORY",0
-        db "L ",$22,"NAME",$22," [A] LOAD; A FILE TO A",0
-        db "W ",$22,"NAME",$22," [S E] SAVE; S-E TO A FILE",0
-        db "@[TEXT]     THE DRIVE'S STATUS, A COMMAND",0
-        db ": A B 'TXT' STORE BYTES, ZX81 TEXT",0
-        db "R           REGISTERS (; AND ' TO EDIT)",0
-        db "G [A]       GO ON (AT A); X THE SAME",0
-        db "F S E B     FILL",0
-        db "T S E D     TRANSFER",0
-        db "C S E D     COMPARE",0
-        db "H S E B ... HUNT BYTES; H S E 'TEXT",0
-        db "= N         HEX, +DEC, %BIN: ALL THREE",0
-        db "Z N         LINE 1: A REM OF N BYTES",0
+; The help, one text for zx64, zx128 and zx128vic: each command, a tab,
+; its words from column 13. V is the C128 builds' only.
+help:   db "M S [E]",9,"MEMORY",0
+        db "D S [E]",9,"DISASSEMBLE",0
+        db "A A TEXT",9,"ASSEMBLE: A 4082 RET",0
+        db "B [A]",9,"BREAKPOINT ON/OFF",0
+        db "S",9,"STEP (RETURN: AGAIN)",0
+        db "G [A]",9,"GO ON (X: THE SAME)",0
+        db "R",9,"REGISTERS",0
+        if MON128
+        db "V",9,"SYSTEM VARIABLES",0
+        endif
+        db ": A B..",9,"STORE: : 4082 3E 01",0
+        db "F S E B",9,"FILL",0
+        db "T S E D",9,"COPY",0
+        db "C S E D",9,"COMPARE",0
+        db "H S E B..",9,"HUNT: H 0 1FFF 'HELLO",0
+        db "= N",9,"HEX, DEC, BIN: = $FF",0
+        db "Z N",9,"REM OF N BYTES IN LINE 1",0
+        db "$",9,"DIRECTORY",0
+        db "L ",$22,"F",$22," [A]",9,"LOAD (FILE TO A)",0
+        db "W ",$22,"F",$22," [S E]",9,"SAVE (S-E TO FILE)",0
+        db "@[CMD]",9,"DRIVE STATUS, COMMAND",0
         db 0
 
 ; ---------------------------------------------------------------- parsing
@@ -1863,7 +1975,7 @@ zx2asc:                         ; ZX81 codes 0-63 as ASCII ($7F: graphics)
         db "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ"
 
         include "monkeys.inc"   ; keys, keys_sh: PETSCII by C64 key (build.py)
-        include "version.inc"   ; verstr: zx64's version (build.py)
+        include "version.inc"   ; verstr: the version (build.py's VERSION, for all builds)
 
 inited:  db 0                   ; the screen has been cleared once
 loaded:  db 0                   ; L "NAME" brought a program: leave to BASIC
@@ -1944,6 +2056,9 @@ part1end:
 ; for IN A,($FE) with A = $EF at $EFFE.
         org $E000
 part2:  db "M2"                 ; zx64 looks for it
+        if MON128 = 0
+mstamp2: dw 0                   ; and its build stamp (build.py)
+        endif
 
 ; ---------------------------------------------------------------- D
 ; D s [e]: disassemble from s to e, or 16 instructions; D alone goes
@@ -3437,7 +3552,8 @@ hs1:    ld a,(hl)
 ; back); @ the drive's status, @text a DOS command (@S:NAME scratches).
 ; The 6510 does it (c64/boot.asm, commands 1-8), as for LOAD and SAVE; it
 ; won't load into its own page or the I/O chips, nor W save from the I/O
-; chips.
+; chips. (A file's address is the Z80's + MOFF, and W's refusal w_from:
+; the platform's, hw64.inc. zx128's: bank 1's own address, any range.)
 CMD_LOAD:  equ 1
 CMD_SAVE:  equ 2
 CMD_PRG:   equ 3
@@ -3455,7 +3571,8 @@ cmd_dir:
         ld a,CMD_DIR
         call dcall
         jp nz,derr
-dr1:    ld a,$7F                ; RUN/STOP: closed first
+dr1:    mpoll                   ; (shown as it goes, as a listing)
+        ld a,$7F                ; RUN/STOP: closed first
         call CREAD
         rla
         jr c,dr2
@@ -3479,7 +3596,7 @@ cmd_l:  ld hl,(lptr)
         jp c,err
         call getw
         jr c,l_prog
-        ld hl,$1000             ; to a: as the C64 has it
+        ld hl,MOFF              ; to a: as a file's address (the C64's)
         add hl,de
         ld (MBOX+$22),hl
         ld a,1
@@ -3495,7 +3612,7 @@ cmd_l:  ld hl,(lptr)
         call putsi
         db "#LOADED ",0
         ld hl,(MBOX+$22)
-        ld de,-$1000
+        ld de,-MOFF
         add hl,de
         call phex4
         ld a,'-'
@@ -3553,13 +3670,8 @@ cw0:    ld (a1),de
         and a
         sbc hl,de
         jp c,err                ; e before s
-        ld a,(a1+1)             ; not from the I/O chips (Z80 $C000-$CFFF)
-        cp $D0
-        jr nc,cw1
-        ld a,(a2+1)
-        cp $C0
-        jp nc,err
-cw1:    ld de,$1000
+        w_from                  ; not from the I/O chips
+cw1:    ld de,MOFF
         ld hl,(a1)
         add hl,de
         ld (MBOX+$22),hl
@@ -3774,5 +3886,61 @@ zline10: db $00,$0A,$0E,$00,$F9,$D4  ; Z's 10 RAND USR 16514 (part 1 is full)
         db $1D,$22,$21,$1D,$20,$7E,$8F,$01,$04,$00,$00,$76
 
 monend:
+
+        if MON128
+; ================================================================ part 3
+; The C128 builds' own commands, in common RAM at $FF05-$FFED: free in
+; both builds' maps (z80/zx128.asm, z80/zx128vic.asm), none of the IN
+; A,($FE) copies' $xxFE in it; $FFEE is the Z80's entry (JP zentry).
+; boot128 puts it there with parts 1 and 2; build.py splits it off at
+; monend and stops if it passes $FFED.
+        org $FF05
+part3:
+
+; ---------------------------------------------------------------- V
+; V: the ZX81's essential system variables, read-only (": 4004 00 80"
+; changes one): its program's layout, then its running state, three a
+; line, read as M reads them; each line a "#" one, to read, not to run.
+; vtab: ASCII as it is shown; a byte $80 + n, the word at $4000 + n in
+; hex; 0 the line's end, another 0 the last.
+cmd_v:  ld hl,vtab
+cv_ln:  call lstart
+cv_c:   ld a,(hl)
+        inc hl
+        or a
+        jr z,cv_e
+        jp m,cv_w
+        if MON128 = 2           ; (zx128vic: the C128's character ROM has no
+        cp '_'                  ; "_", its $1F is a left arrow: its $64, a
+        jr nz,cv_p              ; line along the bottom, instead. zx128's
+        ld a,$64                ; VDC font has "_" at $1F)
+        call pscr
+        jr cv_c
+cv_p:
+        endif
+        call pch
+        jr cv_c
+cv_w:   push hl
+        and $7F
+        ld l,a
+        ld h,$40
+        ld a,(hl)
+        inc hl
+        ld h,(hl)
+        ld l,a
+        call phex4
+        pop hl
+        jr cv_c
+cv_e:   call down
+        ld a,(hl)
+        or a
+        jr nz,cv_ln
+        ret
+vtab:   db "#D_FILE ",$8C,"  DF_CC  ",$8E,"  VARS   ",$90,0     ; $400C $400E $4010
+        db "#E_LINE ",$94,"  STKEND ",$9C,"  RAMTOP ",$84,0     ; $4014 $401C $4004
+        db "#PPC    ",$87,"  FRAMES ",$B4,0                     ; $4007 $4034
+        db 0
+part3end:
+        endif
 
         end

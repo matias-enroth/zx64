@@ -9,10 +9,10 @@ __pycache__/
 
 .DS_Store
 
-# previews saved by the Claude desktop app
+# local previews
 Claude outputs/
 
-# notes for future Claude sessions, not published
+# private notes
 notes/
 
 # python venv for make test
