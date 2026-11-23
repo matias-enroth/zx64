@@ -77,6 +77,27 @@ Also `.writemem`, `.unmount`, `.pause`, `.resume`, `.type`, `.run`, and
   `$D506` bits 6-7 pick**, not `$FF00`'s, with ROM and I/O where `$FF00`
   maps them. Below `$0400` is common RAM, the same in both banks.
 
+## zx64.cfg: zx64 on a C64 Ultimate
+
+The Ultimate only passes I/O to a cartridge that pulls GAME or EXROM,
+and the CP/M cartridge doesn't, so zx64 says `NO Z80`. `zx64.cfg` sets
+the Ultimate up for it.
+
+1. Copy `zx64.cfg` and `zx64.d64` to the Ultimate's USB stick.
+2. `zx64.cfg`: **Load Settings**.
+3. `zx64.d64`: **Mount**, not Run Disk (it turns the cartridge port off).
+4. `LOAD "ZX81",8` and `RUN`.
+
+The settings last until the power is switched off. After a Run Disk,
+set Cartridge Preference to `Auto`, then start again from step 2.
+
+With a JiffyDOS 1571 ROM in the Ultimate's flash, loading is faster.
+Add a line under `[Drive A Settings]`, with your file's name:
+
+    ROM for 1571 mode=JiffyDOS_1571.bin
+
+The Ultimate's REST API can apply the same settings.
+
 ## Seen working
 
 An Ultimate-II+ with firmware 3.15a, in a flat PAL C128: zx128's test
@@ -84,6 +105,9 @@ runs on the real machine, unattended: mounting, resetting, typing,
 polling and reading the screen. `type --c64` is untried on a
 real C64. `test_ultimate.py` tests every command against a stub of
 the API (`python3 -m unittest test_ultimate.py`, 24 tests).
+
+A C64 Ultimate with firmware 1.2.1 and the CP/M cartridge replica: zx64
+with `zx64.cfg`, as in [testing.md](../../docs/testing.md).
 
 ## About
 

@@ -175,15 +175,21 @@ such games when they go on the disk, and F7 repairs the ROM afterwards.
 
 ### The hardware
 
-zx64 is tested on this setup:
+zx64 works on these machines:
 
 - [C64 Reloaded MK2](https://wiki.icomp.de/wiki/C64_reloaded_mk2)
   (Individual Computers). Its USB serial link reads the C64's memory.
+- Commodore 64 Ultimate, with [zx64.cfg](../extras/ultimate/README.md#zx64cfg-zx64-on-a-c64-ultimate)'s
+  settings. Its network link reads the C64's memory.
+
+With:
+
 - DL2DW's [CP/M cartridge replica](https://codeberg.org/diwou/Commodore_CPM_Cartridge):
   schematic, Gerbers and parts list, plus one wire for `/INT`, and if you
   like an [LED](cpm-cart.md#led-while-the-z80-runs) that shows which CPU
   has the machine.
-- An [SD2IEC](https://www.tfw8b.com/sd2iec-info/).
+- An [SD2IEC](https://www.tfw8b.com/sd2iec-info/), or the Ultimate's
+  own drive.
 
 Other setups may work; reports are welcome.
 
@@ -983,7 +989,9 @@ meanwhile; on zx128vic, on the top row.
   cartridge fully home; half-seated, the picture freezes and keys come
   and go.
 - **"NO Z80: ZX64 NEEDS THE C64 CP/M CARTRIDGE."** zx64 found no Z80:
-  no cartridge, or it isn't seated.
+  no cartridge, or it isn't seated. On a C64 Ultimate: its settings
+  aren't loaded, or the disk was started with Run Disk
+  ([zx64.cfg](../extras/ultimate/README.md#zx64cfg-zx64-on-a-c64-ultimate)).
 - **"ZX64 NOT LOADED"** after `RUN`: the disk has the boot file, `ZX81`,
   but not `ZX64`, or there was a disk error. Copy zx64's four
   files from `build/zx64.d64`: `ZX81`, `ZX64`, `zx64mon` and `zx64mon2`.

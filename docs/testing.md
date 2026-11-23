@@ -1,7 +1,8 @@
 # Testing
 
-zx64: DL2DW's cartridge replica with the `/INT` wire. Drive: SD2IEC.
-Emulator: VICE (`x64sc -cpmcart`, 3.7.1 and 3.10).
+zx64: DL2DW's cartridge replica with the `/INT` wire. Drive: SD2IEC;
+on the C64 Ultimate, its own drive. Emulator: VICE (`x64sc -cpmcart`,
+3.7.1 and 3.10).
 
 zx128 and zx128vic: an Ultimate-II+ as the drive (a 1571, burst) and as
 the cartridge for the function ROM; a real 1571 too. Emulator: VICE
@@ -10,6 +11,7 @@ the cartridge for the function ROM; a real 1571 too. Emulator: VICE
 | C64 | Result |
 |---|---|
 | C64 Reloaded MK2 | works: everything below |
+| Commodore 64 Ultimate, firmware 1.2.1 | works with `extras/ultimate/zx64.cfg`: [On the C64 Ultimate](#on-the-c64-ultimate) |
 | C64 Reloaded (the first) | crashes seconds after the Z80 starts |
 | Breadbin #1, 250407 rev B | crashes after a few minutes, in Mazogs (CP/M too) |
 
@@ -346,6 +348,70 @@ Seen on the C128, zx128vic (40 columns):
 Not tried:
 
 - [ ] An NTSC C128, a C128D, a 16K VDC
+
+## On the C64 Ultimate
+
+A Commodore 64 Ultimate (Starlight Edition, PAL, firmware 1.2.1, FPGA
+126, core 1.50) with the same cartridge replica, the `/INT` wire and the
+LED. The drive: the Ultimate's own drive A. zx64 1.2's release
+`zx64.d64`, unchanged.
+
+The settings, one at a time, over the REST API:
+
+- [x] Cartridge Preference `Auto` (the default): `NO Z80` every time.
+      The firmware routes I/O to the port only for a cartridge that
+      pulls GAME or EXROM, and this one pulls neither
+- [x] `Manual`, all four Bus Sharing items `Both`: the Z80 starts
+- [x] Bus Operation Mode `Compatibility`: the `K` cursor once; then
+      `LOAD "MAZOGS"` hung with the LED off, the Ultimate's DMA locked
+      out (`readmem` returned `39 00` repeated). Another start: a white
+      screen, the LED off
+- [x] `Quiet`, Turbo Control `Off`: the `K` cursor; `LOAD "MAZOGS"`
+      (the LED off while the 6510 loads, on again for the game), two
+      rounds of Mazogs and the first level of `BOULDERL` played, no
+      crash
+- [x] Starting from the Ultimate's menu, with `extras/ultimate/zx64.cfg`:
+      Load Settings, Mount, `LOAD "ZX81",8` and `RUN`: the `K` cursor.
+      The C64 had been rebooted with a JiffyDOS kernal beforehand, and
+      loading the `.cfg` kept it, so SHIFT+RUN/STOP worked
+- [x] Run Disk instead of Mount: `NO Z80`, whatever the settings. Run
+      Disk starts the disk through the Ultimate's own helper cartridge,
+      which turns the external port off (`start_cartridge()` sets
+      `C64_BUS_EXTERNAL` to 0 in the firmware's source), and nothing
+      turns it on again until a setting changes or the REST API's
+      `machine:reboot`. Run Disk does apply a `zx64.cfg` beside the d64
+      by itself
+- [x] Changing a setting over REST (`PUT` or `POST /v1/configs`) or
+      `machine:reboot` sets the port up; a plain `machine:reset` doesn't
+- [x] `extras/ultimate/zx64.cfg` as it is, so drive A a 1571 with the
+      Ultimate's stock `1571.rom`: the `K` cursor;
+      `LOAD "MAZOGS"` loads, at the kernal's speed
+
+The drive, `jtest` (`ZX64`, 14,309 bytes; `k` the kernal, `j7` zx64's
+reader); every read checked, all ok:
+
+| Drive A | C64 kernal | `k` | `j7` |
+|---|---|---|---|
+| 1541, JiffyDOS 1541-II 6.00 ROM | stock | 409 B/s | 1,118 B/s, "jiffy yes" |
+| 1571, JiffyDOS 1571 6.01 ROM, as it starts | stock | 395 B/s | 2,158 B/s |
+| the same | JiffyDOS 6.01 | 2,334 B/s | 2,330 B/s |
+| the same after `U0>M1` | JiffyDOS 6.01 | 422 B/s | 421 B/s, "jiffy no" |
+
+- [x] zx64's reader is as fast as JiffyDOS's own reads with the same
+      drive, to the hundredth of a second. A whole-file JiffyDOS
+      `LOAD "ZX64",8,1` took about 10 s with the directory search: no
+      faster
+- [x] The files laid out with sector interleave 4, 6, 8 and 10 (the
+      1541's own): 0.9-1.1 KB/s on the 1541 with all four. The drive's
+      handling of each byte sets the pace, not the layout
+- [x] After `U0>M1` the drive doesn't answer JiffyDOS, not even the
+      JiffyDOS kernal's; zx64 falls back to the kernal's reads. Once,
+      with the stock kernal, the first `j7` read hung there instead
+
+Not tried:
+
+- [ ] A whole game of Mazogs to the exit; SAVE; the monitor
+- [ ] The CP/M cartridge on an Ultimate-II+ in a C64, or an Ultimate 64
 
 ## pcheck on real programs
 
