@@ -386,6 +386,8 @@ The settings, one at a time, over the REST API:
 - [x] `extras/ultimate/zx64.cfg` as it is, so drive A a 1571 with the
       Ultimate's stock `1571.rom`: the `K` cursor;
       `LOAD "MAZOGS"` loads, at the kernal's speed
+- [x] `SAVE` to the Ultimate's drive and `LOAD` back; the monitor (F5);
+      games played
 
 The drive, `jtest` (`ZX64`, 14,309 bytes; `k` the kernal, `j7` zx64's
 reader); every read checked, all ok:
@@ -410,8 +412,7 @@ reader); every read checked, all ok:
 
 Not tried:
 
-- [ ] A whole game of Mazogs to the exit; SAVE; the monitor
-- [ ] The CP/M cartridge on an Ultimate-II+ in a C64, or an Ultimate 64
+- [ ] The CP/M cartridge on an Ultimate 64
 
 ## pcheck on real programs
 
